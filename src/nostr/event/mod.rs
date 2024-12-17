@@ -6,15 +6,20 @@ use tag::{Tag, list::Tags};
 mod id;
 use id::EventId;
 
-#[derive(Debug, Default)]
-pub struct EventBuilder<'a> {
-    pub created_at: Option<i64>,
-    pub kind: Option<u32>,
-    pub tags: Option<Tags>,
-    pub content: Option<&'a str>,
+#[derive(Debug, PartialEq, Eq)]
+pub enum EventBuilderError {
+    MissingFields
 }
 
-impl EventBuilder<'_> {
+#[derive(Debug, Default)]
+pub struct EventBuilder {
+    pub created_at: Option<i64>,
+    pub kind: Option<u32>,
+    pub tags: Tags,
+    pub content: String,
+}
+
+impl EventBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -30,8 +35,7 @@ impl EventBuilder<'_> {
     }
 
     pub fn tag(mut self, tag: Tag) -> Self {
-        let tags = self.tags.get_or_insert_default();
-        tags.push(tag);
+        self.tags.push(tag);
 
         self
     }
@@ -41,23 +45,42 @@ impl EventBuilder<'_> {
         where
             I: IntoIterator<Item = Tag>,
     {
-        let self_tags = self.tags.get_or_insert_default();
-
-        tags.into_iter().map(|t| self_tags.push(t));
+        tags.into_iter().map(|t| self.tags.push(t));
 
         self
+    }
+
+    pub fn content(mut self, content: &str) -> Self {
+        self.content = content.to_owned();
+        self
+    }
+
+    pub fn build(&self) -> Result<Event, EventBuilderError> {
+        if self.created_at.is_none() || self.kind.is_none() {
+            return Err(EventBuilderError::MissingFields);
+        }
+
+        Ok(Event {
+            created_at: self.created_at.unwrap(),
+            kind: self.kind.unwrap(),
+            tags: self.tags.clone(),
+            content: self.content.clone(),
+            id: None,
+            pubkey: None,
+            sig: None,
+        })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Event {
-    pub id: EventId,
-    pub pubkey: PublicKey,
+    pub id: Option<EventId>,
+    pub pubkey: Option<PublicKey>,
     pub created_at: i64,
-    pub kind: i32,
-    pub tags: Vec<Vec<String>>,
+    pub kind: u32,
+    pub tags: Tags,
     pub content: String,
-    pub sig: Signature,
+    pub sig: Option<Signature>,
 }
 
 impl Event {
@@ -65,9 +88,9 @@ impl Event {
     pub fn verify(&self) -> bool {
         let secp = Secp256k1::verification_only();
 
-        let message = Message::from_digest(*self.id.as_bytes());
+        let message = Message::from_digest(*self.id.clone().expect("id should be present").as_bytes());
         
-        secp.verify_schnorr(&self.sig, &message, &self.pubkey.into()).is_ok()
+        secp.verify_schnorr(&self.sig.expect("signature should be present"), &message, &self.pubkey.expect("public key should be present").into()).is_ok()
     }
 
     pub fn sign_with_seckey(&mut self, seckey: &SecretKey) -> Result<(), String> {
@@ -82,9 +105,10 @@ impl Event {
     pub fn sign(&mut self, keypair: &Keypair) -> Result<(), String> {
         let secp = Secp256k1::new();
 
-        self.id = self.compute_id();
-        let message = Message::from_digest(*self.id.as_bytes());
-        self.sig = secp.sign_schnorr(&message, keypair);
+        let id = self.compute_id();
+        self.id = Some(id.clone());
+        let message = Message::from_digest(*id.as_bytes());
+        self.sig = Some(secp.sign_schnorr(&message, keypair));
         Ok(())
     }
 
@@ -111,13 +135,13 @@ mod tests {
 
     fn create_test_event() -> Event {
         Event {
-            id: EventId::default(),
-            pubkey: PublicKey::from_slice(&[0; 33]).unwrap(),
+            id: Some(EventId::default()),
+            pubkey: Some(PublicKey::from_slice(&[0; 33]).unwrap()),
             created_at: 1234567890,
             kind: 1,
-            tags: vec![vec!["tag1".to_string(), "value1".to_string()]],
+            tags: vec![vec!["tag1".to_string(), "value1".to_string()]].into(),
             content: "Test content".to_string(),
-            sig: Signature::from_slice(&[0; 64]).unwrap(),
+            sig: Some(Signature::from_slice(&[0; 64]).unwrap()),
         }
     }
 
