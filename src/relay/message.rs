@@ -1,10 +1,8 @@
 use ewebsock::{WsMessage, WsEvent};
-use nostr::types::Filter;
-use nostr::Event;
-use serde::de::{SeqAccess, Visitor};
+use crate::nostr::Filter;
+use crate::nostr::Event;
 use serde::ser::SerializeSeq;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt::{self};
+use serde::{Serialize, Serializer};
 use crate::error;
 
 #[derive(Debug, Eq, PartialEq)]

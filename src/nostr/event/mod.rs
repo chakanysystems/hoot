@@ -1,10 +1,12 @@
 use bitcoin::secp256k1::{Message, PublicKey, SecretKey, Keypair, schnorr::Signature, Secp256k1, hashes::{Hash, sha256}};
 use serde_json::json;
 
-mod tag;
-use tag::{Tag, list::Tags};
-mod id;
-use id::EventId;
+pub mod tag;
+pub use tag::{Tag, list::Tags};
+pub mod id;
+pub use id::EventId;
+pub mod kind;
+pub use kind::EventKind; 
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EventBuilderError {
@@ -14,7 +16,7 @@ pub enum EventBuilderError {
 #[derive(Debug, Default)]
 pub struct EventBuilder {
     pub created_at: Option<i64>,
-    pub kind: Option<u32>,
+    pub kind: Option<EventKind>,
     pub tags: Tags,
     pub content: String,
 }
@@ -24,7 +26,12 @@ impl EventBuilder {
         Self::default()
     }
 
-    pub fn kind(mut self, kind: u32) -> Self {
+    pub fn gift_wrap(sender_keypair: &Keypair, recipient_pubkey: &PublicKey, event: Event) -> Result<Event, EventBuilderError> {
+        event.pubkey = Some(sender_keypair.clone().public_key());
+        event.id = Some(event.compute_id());
+    }
+
+    pub fn kind(mut self, kind: EventKind) -> Self {
         self.kind = Some(kind);
         self
     }
@@ -62,7 +69,7 @@ impl EventBuilder {
 
         Ok(Event {
             created_at: self.created_at.unwrap(),
-            kind: self.kind.unwrap(),
+            kind: self.kind.unwrap().into(),
             tags: self.tags.clone(),
             content: self.content.clone(),
             id: None,
@@ -104,6 +111,10 @@ impl Event {
     /// Signs the event with the given private key
     pub fn sign(&mut self, keypair: &Keypair) -> Result<(), String> {
         let secp = Secp256k1::new();
+
+        if self.pubkey.is_none() {
+            self.pubkey = Some(keypair.public_key());
+        }
 
         let id = self.compute_id();
         self.id = Some(id.clone());

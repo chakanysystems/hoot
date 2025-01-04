@@ -112,7 +112,7 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
         if app.account_manager.loaded_keys.len() > 0 {
             let mut gw_sub = relay::Subscription::default();
 
-            let filter = nostr::Filter::new().kind(nostr::Kind::Custom(mail_event::MAIL_EVENT_KIND)).custom_tag(nostr::SingleLetterTag { character: nostr::Alphabet::P, uppercase: false }, app.account_manager.loaded_keys.clone().into_iter().map(|keys| keys.public_key()));
+            let filter = nostr::Filter::new().add_kind(mail_event::MAIL_EVENT_KIND).add_tag("p", app.account_manager.loaded_keys.clone().into_iter().map(|keys| keys.public_key()));
             gw_sub.filter(filter);
 
             // TODO: fix error handling
@@ -209,36 +209,6 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         .insert(egui::Id::new(rand::random::<u32>()), state);
                 }
 
-                if ui.button("Send Test Event").clicked() {
-                    let temp_keys = nostr::Keys::generate();
-                    // todo: lmao
-                    let new_event = nostr::EventBuilder::text_note("GFY!")
-                        .sign_with_keys(&temp_keys)
-                        .unwrap();
-                    let event_json = crate::relay::ClientMessage::Event { event: new_event };
-                    let _ = &app
-                        .relays
-                        .send(ewebsock::WsMessage::Text(
-                            serde_json::to_string(&event_json).unwrap(),
-                        ))
-                        .unwrap();
-                }
-
-                if ui.button("Get kind 1 notes").clicked() {
-                    let mut filter = nostr::types::Filter::new();
-                    filter = filter.kind(nostr::Kind::TextNote);
-                    let mut sub = crate::relay::Subscription::default();
-                    sub.filter(filter);
-                    let c_msg = crate::relay::ClientMessage::from(sub);
-
-                    let _ = &app
-                        .relays
-                        .send(ewebsock::WsMessage::Text(
-                            serde_json::to_string(&c_msg).unwrap(),
-                        ))
-                        .unwrap();
-                }
-
                 ui.label(format!("total events rendered: {}", app.events.len()));
 
                 TableBuilder::new(ui)
@@ -263,7 +233,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 ui.checkbox(&mut false, "");
                             });
                             row.col(|ui| {
-                                ui.label(event.pubkey.to_string());
+                                ui.label(event.pubkey.expect("I NEED PUBLIC KEY").to_string());
                             });
                             row.col(|ui| {
                                 ui.label(event.content.clone());
@@ -274,7 +244,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
 
                             if row.response().clicked() {
                                 println!("clicked: {}", event.content.clone());
-                                app.focused_post = event.id.to_string();
+                                app.focused_post = event.id.expect("WE SHOULD HAVE AN EVENT ID").to_string();
                                 app.page = Page::Post;
                             }
                         });
@@ -291,14 +261,14 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 let gift_wrapped_event = app
                     .events
                     .iter()
-                    .find(|&x| x.id.to_string() == app.focused_post)
+                    .find(|&x| x.id.expect("there should be id").to_string() == app.focused_post)
                     .expect("event id should be present inside event list");
 
                 let event_to_display = app.account_manager.unwrap_gift_wrap(gift_wrapped_event).expect("we should be able to unwrap an event we recieved");
 
                 ui.heading("View Message");
                 ui.label(format!("Content: {}", event_to_display.rumor.content));
-                ui.label(match &event_to_display.rumor.tags.find(nostr::TagKind::Subject) {
+                ui.label(match &event_to_display.rumor.tags.find(nostr::event::tag::kind::TagKind::Subject) {
                     Some(s) => match s.content() {
                         Some(c) => format!("Subject: {}", c.to_string()),
                         None => "Subject: None".to_string(),

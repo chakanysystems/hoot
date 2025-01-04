@@ -1,6 +1,8 @@
+use serde::{Serialize, Deserialize};
 type Bytes = [u8; 32];
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EventId {
     inner: Bytes,
 }
@@ -14,6 +16,13 @@ impl EventId {
     #[inline]
     pub fn into_bytes(&self) -> Bytes {
         self.inner
+    }
+}
+
+impl std::fmt::Display for EventId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use bitcoin::hex::DisplayHex;
+        write!(f, "{}", self.inner.to_lower_hex_string())
     }
 }
 

@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 
 pub mod list;
+pub mod kind;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tag(Vec<String>);
