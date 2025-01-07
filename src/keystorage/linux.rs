@@ -45,7 +45,7 @@ impl BasicFileStorage {
         fs::create_dir_all(&self.credentials_dir)?;
 
         let public_key = keypair.public_key().to_hex();
-        let private_key = keypair.secret_key().unwrap().to_secret_hex();
+        let private_key = keypair.secret_key().to_secret_hex();
 
         let file_path = Path::new(&self.credentials_dir).join(&public_key);
 
