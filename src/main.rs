@@ -79,7 +79,6 @@ pub struct Hoot {
     status: HootStatus,
     state: HootState,
     relays: relay::RelayPool,
-    ndb: nostrdb::Ndb,
     events: Vec<nostr::Event>,
     account_manager: account_manager::AccountManager,
 }
@@ -149,10 +148,6 @@ fn process_message(app: &mut Hoot, msg: &relay::RelayMessage) {
 fn process_event(app: &mut Hoot, _sub_id: &str, event: &str) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
-
-    if let Err(err) = app.ndb.process_event(event) {
-        error!("error processing event: {}", err);
-    }
 }
 
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
@@ -319,18 +314,12 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
 impl Hoot {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let storage_dir = eframe::storage_dir("Hoot").unwrap();
-        let mut ndb_config = nostrdb::Config::new();
-        ndb_config.set_ingester_threads(3);
-
-        let ndb = nostrdb::Ndb::new(storage_dir.to_str().unwrap(), &ndb_config)
-            .expect("could not load nostrdb");
         Self {
             page: Page::Inbox,
             focused_post: "".into(),
             status: HootStatus::Initalizing,
             state: Default::default(),
             relays: relay::RelayPool::new(),
-            ndb,
             events: Vec::new(),
             account_manager: account_manager::AccountManager::new(),
         }
