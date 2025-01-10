@@ -137,17 +137,30 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
 fn process_message(app: &mut Hoot, msg: &relay::RelayMessage) {
     use relay::RelayMessage::*;
     match msg {
-        Event(sub_id, event) => process_event(app, &sub_id, &event),
-        _ => {
-            // we don't care rn.
-        },
+        Event(sub_id, event) => process_event(app, sub_id, event),
+        Notice(msg) => debug!("Relay notice: {}", msg),
+        OK(result) => debug!("Command result: {:?}", result),
+        Eose(sub_id) => debug!("End of stored events for subscription {}", sub_id),
+        Closed(sub_id, msg) => debug!("Subscription {} closed: {}", sub_id, msg),
     }
-
 }
 
-fn process_event(app: &mut Hoot, _sub_id: &str, event: &str) {
+fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
+
+    // Parse the event using the RelayMessage type which handles the ["EVENT", subscription_id, event_json] format
+    if let Ok(event) = serde_json::from_str::<nostr::Event>(event_json) {
+        // Verify the event signature
+        if event.verify().is_ok() {
+            debug!("Verified event: {:?}", event);
+            app.events.push(event);
+        } else {
+            error!("Event verification failed");
+        }
+    } else {
+        error!("Failed to parse event JSON: {}", event_json);
+    }
 }
 
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
