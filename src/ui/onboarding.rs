@@ -90,12 +90,14 @@ impl OnboardingScreen {
             ui.label("Your public key:");
             ui.add_space(8.0);
             
-            let text_style = egui::TextStyle::Monospace;
-            let font_id = ui.style().text_styles.get(&text_style).unwrap().clone();
-            let galley = ui.fonts(|f| f.layout_multiline(pubkey.to_string(), font_id, ui.available_width(), 0.0));
-            let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
-            ui.painter().rect_filled(rect, 8.0, ui.style().visuals.extreme_bg_color);
-            ui.painter().galley(rect.min, galley, ui.style().noninteractive().text_color());
+            ui.add(
+                egui::TextEdit::multiline(&mut pubkey.to_string())
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(ui.available_width())
+                    .desired_rows(1)
+                    .frame(true)
+                    .interactive(false)
+            );
             
             ui.add_space(32.0);
 

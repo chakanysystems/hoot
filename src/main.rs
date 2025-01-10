@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // for windows release
 
-use eframe::egui::{self, FontDefinitions, Sense, Vec2b};
+use eframe::egui::{self, FontDefinitions};
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
 use std::collections::HashMap;
@@ -292,7 +292,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui.add_space(8.0);
 
                 // Debug buttons in collapsing section
-                if ui.collapsing("Debug Controls", |ui| {
+                let debug_header = ui.collapsing("Debug Controls", |ui| {
                     if ui.button("Send Test Event").clicked() {
                         let temp_keys = nostr::Keys::generate();
                         let new_event = nostr::EventBuilder::text_note("GFY!")
@@ -322,7 +322,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                             .unwrap();
                     }
                     ui.label(format!("Total events: {}", app.events.len()));
-                }).body_returned {
+                });
+                
+                if debug_header.header_response.clicked() {
                     ui.add_space(8.0);
                 }
 
@@ -360,35 +362,33 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         let event = &events[row.index()];
                         let is_selected = app.focused_post == event.id.to_string();
                         
-                        let row_response = row.row_ui(|mut row| {
-                            row.col(|ui| {
-                                ui.checkbox(&mut false, "");
-                            });
-                            row.col(|ui| {
-                                ui.label("☆");
-                            });
-                            row.col(|ui| {
-                                ui.label(egui::RichText::new(truncate_string(&event.pubkey.to_string(), 20))
-                                    .strong(is_selected));
-                            });
-                            row.col(|ui| {
-                                ui.label(egui::RichText::new(truncate_string(&event.content, 50))
-                                    .strong(is_selected));
-                            });
-                            row.col(|ui| {
-                                ui.label(egui::RichText::new("2 minutes ago")
-                                    .strong(is_selected));
-                            });
+                        row.col(|ui| {
+                            ui.checkbox(&mut false, "");
+                        });
+                        row.col(|ui| {
+                            ui.label("☆");
+                        });
+                        row.col(|ui| {
+                            let text = egui::RichText::new(truncate_string(&event.pubkey.to_string(), 20));
+                            ui.label(if is_selected { text.strong() } else { text });
+                        });
+                        row.col(|ui| {
+                            let text = egui::RichText::new(truncate_string(&event.content, 50));
+                            ui.label(if is_selected { text.strong() } else { text });
+                        });
+                        row.col(|ui| {
+                            let text = egui::RichText::new("2 minutes ago");
+                            ui.label(if is_selected { text.strong() } else { text });
                         });
 
-                        if row_response.response.clicked() {
+                        if row.response().clicked() {
                             app.focused_post = event.id.to_string();
                             app.page = Page::Post;
                         }
 
                         // Highlight on hover
-                        if row_response.response.hovered() {
-                            row_response.response.highlight();
+                        if row.response().hovered() {
+                            row.response().highlight();
                         }
                     });
                 });
