@@ -6,6 +6,16 @@ use egui_extras::{Column, TableBuilder};
 use std::collections::HashMap;
 use tracing::{debug, error, info, Level};
 
+fn truncate_string(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let mut truncated: String = s.chars().take(max_chars - 3).collect();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
 mod account_manager;
 mod error;
 mod keystorage;
@@ -32,7 +42,25 @@ fn main() -> Result<(), eframe::Error> {
         "Hoot",
         options,
         Box::new(|cc| {
-            let _ = &cc.egui_ctx.set_visuals(egui::Visuals::light());
+            let mut style = egui::Style::default();
+            style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+            style.spacing.window_margin = egui::Margin::same(16.0);
+            style.visuals.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
+            style.visuals.widgets.inactive.rounding = egui::Rounding::same(8.0);
+            style.visuals.widgets.active.rounding = egui::Rounding::same(8.0);
+            style.visuals.widgets.hovered.rounding = egui::Rounding::same(8.0);
+            style.visuals.window_rounding = egui::Rounding::same(10.0);
+            
+            // Custom colors
+            let accent_color = egui::Color32::from_rgb(79, 70, 229); // Indigo
+            style.visuals.selection.bg_fill = accent_color;
+            style.visuals.widgets.active.bg_fill = accent_color;
+            style.visuals.widgets.active.weak_bg_fill = accent_color.linear_multiply(0.3);
+            style.visuals.widgets.hovered.bg_fill = accent_color.linear_multiply(0.8);
+            style.visuals.hyperlink_color = accent_color;
+            
+            let _ = &cc.egui_ctx.set_style(style);
+            
             let mut fonts = FontDefinitions::default();
             fonts.font_data.insert(
                 "Inter".to_owned(),
@@ -44,9 +72,6 @@ fn main() -> Result<(), eframe::Error> {
                 .unwrap()
                 .insert(0, "Inter".to_owned());
             let _ = &cc.egui_ctx.set_fonts(fonts);
-            let _ = &cc
-                .egui_ctx
-                .style_mut(|style| style.visuals.dark_mode = false);
             Box::new(Hoot::new(cc))
         }),
     )
@@ -176,25 +201,67 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
             ui::onboarding::OnboardingScreen::ui(app, ui);
         });
     } else {
-        egui::SidePanel::left("Side Navbar").show(ctx, |ui| {
-            ui.heading("Hoot");
-            if ui.button("Inbox").clicked() {
-                app.page = Page::Inbox;
-            }
-            if ui.button("Drafts").clicked() {
-                app.page = Page::Drafts;
-            }
-            if ui.button("Settings").clicked() {
-                app.page = Page::Settings;
-            }
-            if ui.button("Onboarding").clicked() {
-                app.page = Page::Onboarding;
-            }
-        });
+        egui::SidePanel::left("Side Navbar")
+            .resizable(false)
+            .default_width(200.0)
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(8.0);
+                    ui.heading("🦉 Hoot");
+                    ui.add_space(16.0);
+                });
+                
+                ui.separator();
+                ui.add_space(8.0);
 
-        egui::TopBottomPanel::top("Search").show(ctx, |ui| {
-            ui.heading("Search");
-        });
+                let nav_button = |ui: &mut egui::Ui, text: &str, icon: &str, selected: bool| {
+                    let response = ui.add(egui::Button::new(
+                        egui::RichText::new(format!("{} {}", icon, text))
+                            .size(16.0)
+                    ).fill(if selected {
+                        ui.style().visuals.widgets.active.weak_bg_fill
+                    } else {
+                        ui.style().visuals.widgets.inactive.bg_fill
+                    }));
+                    response.clicked()
+                };
+
+                if nav_button(ui, "Inbox", "📥", app.page == Page::Inbox) {
+                    app.page = Page::Inbox;
+                }
+                if nav_button(ui, "Drafts", "📝", app.page == Page::Drafts) {
+                    app.page = Page::Drafts;
+                }
+                
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                
+                if nav_button(ui, "Settings", "⚙️", app.page == Page::Settings) {
+                    app.page = Page::Settings;
+                }
+                if nav_button(ui, "Onboarding", "🚀", app.page == Page::Onboarding) {
+                    app.page = Page::Onboarding;
+                }
+            });
+
+        egui::TopBottomPanel::top("Search")
+            .exact_height(60.0)
+            .show(ctx, |ui| {
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    let search_width = ui.available_width() - 16.0;
+                    let search = ui.add(
+                        egui::TextEdit::singleline(&mut String::new())
+                            .hint_text("Search messages...")
+                            .desired_width(search_width)
+                    );
+                    if search.gained_focus() {
+                        // TODO: Handle search focus
+                    }
+                });
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // todo: fix
@@ -203,89 +270,128 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
             }
 
             if app.page == Page::Inbox {
-                ui.label("hello there!");
-                if ui.button("Compose").clicked() {
-                    let state = ui::compose_window::ComposeWindowState {
-                        subject: String::new(),
-                        to_field: String::new(),
-                        content: String::new(),
-                        selected_account: None,
-                    };
-                    app.state
-                        .compose_window
-                        .insert(egui::Id::new(rand::random::<u32>()), state);
+                ui.horizontal(|ui| {
+                    ui.heading("Inbox");
+                    ui.add_space(ui.available_width() - 120.0); // Push compose to right
+                    if ui.add(egui::Button::new(
+                        egui::RichText::new("✏️ Compose")
+                            .size(16.0)
+                    ).min_size(egui::vec2(100.0, 32.0))).clicked() {
+                        let state = ui::compose_window::ComposeWindowState {
+                            subject: String::new(),
+                            to_field: String::new(),
+                            content: String::new(),
+                            selected_account: None,
+                        };
+                        app.state
+                            .compose_window
+                            .insert(egui::Id::new(rand::random::<u32>()), state);
+                    }
+                });
+                
+                ui.add_space(8.0);
+
+                // Debug buttons in collapsing section
+                if ui.collapsing("Debug Controls", |ui| {
+                    if ui.button("Send Test Event").clicked() {
+                        let temp_keys = nostr::Keys::generate();
+                        let new_event = nostr::EventBuilder::text_note("GFY!")
+                            .sign_with_keys(&temp_keys)
+                            .unwrap();
+                        let event_json = crate::relay::ClientMessage::Event { event: new_event };
+                        let _ = &app
+                            .relays
+                            .send(ewebsock::WsMessage::Text(
+                                serde_json::to_string(&event_json).unwrap(),
+                            ))
+                            .unwrap();
+                    }
+
+                    if ui.button("Get kind 1 notes").clicked() {
+                        let mut filter = nostr::types::Filter::new();
+                        filter = filter.kind(nostr::Kind::TextNote);
+                        let mut sub = crate::relay::Subscription::default();
+                        sub.filter(filter);
+                        let c_msg = crate::relay::ClientMessage::from(sub);
+
+                        let _ = &app
+                            .relays
+                            .send(ewebsock::WsMessage::Text(
+                                serde_json::to_string(&c_msg).unwrap(),
+                            ))
+                            .unwrap();
+                    }
+                    ui.label(format!("Total events: {}", app.events.len()));
+                }).body_returned {
+                    ui.add_space(8.0);
                 }
 
-                if ui.button("Send Test Event").clicked() {
-                    let temp_keys = nostr::Keys::generate();
-                    // todo: lmao
-                    let new_event = nostr::EventBuilder::text_note("GFY!")
-                        .sign_with_keys(&temp_keys)
-                        .unwrap();
-                    let event_json = crate::relay::ClientMessage::Event { event: new_event };
-                    let _ = &app
-                        .relays
-                        .send(ewebsock::WsMessage::Text(
-                            serde_json::to_string(&event_json).unwrap(),
-                        ))
-                        .unwrap();
-                }
-
-                if ui.button("Get kind 1 notes").clicked() {
-                    let mut filter = nostr::types::Filter::new();
-                    filter = filter.kind(nostr::Kind::TextNote);
-                    let mut sub = crate::relay::Subscription::default();
-                    sub.filter(filter);
-                    let c_msg = crate::relay::ClientMessage::from(sub);
-
-                    let _ = &app
-                        .relays
-                        .send(ewebsock::WsMessage::Text(
-                            serde_json::to_string(&c_msg).unwrap(),
-                        ))
-                        .unwrap();
-                }
-
-                ui.label(format!("total events rendered: {}", app.events.len()));
-
-                TableBuilder::new(ui)
-                    .column(Column::auto())
-                    .column(Column::auto())
-                    .column(Column::remainder())
-                    .column(Column::remainder())
-                    .column(Column::remainder())
+                let table = TableBuilder::new(ui)
                     .striped(true)
-                    .sense(Sense::click())
-                    .auto_shrink(Vec2b { x: false, y: false })
-                    .header(20.0, |_header| {})
-                    .body(|mut body| {
-                        let row_height = 30.0;
-                        let events = app.events.clone();
-                        body.rows(row_height, events.len(), |mut row| {
-                            let event = &events[row.index()];
-                            row.col(|ui| {
-                                ui.checkbox(&mut false, "");
-                            });
-                            row.col(|ui| {
-                                ui.checkbox(&mut false, "");
-                            });
-                            row.col(|ui| {
-                                ui.label(event.pubkey.to_string());
-                            });
-                            row.col(|ui| {
-                                ui.label(event.content.clone());
-                            });
-                            row.col(|ui| {
-                                ui.label("2 minutes ago");
-                            });
-
-                            if row.response().clicked() {
-                                println!("clicked: {}", event.content.clone());
-                                app.focused_post = event.id.to_string();
-                                app.page = Page::Post;
-                            }
+                    .resizable(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::auto().at_least(30.0)) // Select
+                    .column(Column::auto().at_least(30.0)) // Star
+                    .column(Column::remainder().at_least(200.0)) // From
+                    .column(Column::remainder().at_least(300.0)) // Content
+                    .column(Column::remainder().at_least(120.0)) // Time
+                    .header(24.0, |mut header| {
+                        header.col(|ui| {
+                            ui.checkbox(&mut false, "");
+                        });
+                        header.col(|ui| {
+                            ui.label("⭐");
+                        });
+                        header.col(|ui| {
+                            ui.strong("From");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Content");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Time");
                         });
                     });
+
+                table.body(|mut body| {
+                    let row_height = 40.0;
+                    let events = app.events.clone();
+                    body.rows(row_height, events.len(), |mut row| {
+                        let event = &events[row.index()];
+                        let is_selected = app.focused_post == event.id.to_string();
+                        
+                        let row_response = row.row_ui(|mut row| {
+                            row.col(|ui| {
+                                ui.checkbox(&mut false, "");
+                            });
+                            row.col(|ui| {
+                                ui.label("☆");
+                            });
+                            row.col(|ui| {
+                                ui.label(egui::RichText::new(truncate_string(&event.pubkey.to_string(), 20))
+                                    .strong(is_selected));
+                            });
+                            row.col(|ui| {
+                                ui.label(egui::RichText::new(truncate_string(&event.content, 50))
+                                    .strong(is_selected));
+                            });
+                            row.col(|ui| {
+                                ui.label(egui::RichText::new("2 minutes ago")
+                                    .strong(is_selected));
+                            });
+                        });
+
+                        if row_response.response.clicked() {
+                            app.focused_post = event.id.to_string();
+                            app.page = Page::Post;
+                        }
+
+                        // Highlight on hover
+                        if row_response.response.hovered() {
+                            row_response.response.highlight();
+                        }
+                    });
+                });
             } else if app.page == Page::Settings {
                 ui.heading("Settings");
                 ui::settings::SettingsScreen::ui(app, ui);
