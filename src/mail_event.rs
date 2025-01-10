@@ -2,6 +2,25 @@ use nostr::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind, TagStandar
 use std::collections::HashMap;
 use pollster::FutureExt as _;
 
+#[derive(Debug)]
+pub struct MailEvent {
+    pub sender: PublicKey,
+    pub rumor: Event,
+}
+
+impl MailEvent {
+    pub fn from_event(event: &Event) -> Result<Self, &'static str> {
+        if event.kind != Kind::Custom(MAIL_EVENT_KIND) {
+            return Err("Not a mail event");
+        }
+
+        Ok(Self {
+            sender: event.pubkey,
+            rumor: event.clone(),
+        })
+    }
+}
+
 pub const MAIL_EVENT_KIND: u16 = 1059;
 
 pub struct MailMessage {

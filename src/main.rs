@@ -16,6 +16,32 @@ fn truncate_string(s: &str, max_chars: usize) -> String {
     }
 }
 
+fn format_time(timestamp: i64) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    
+    let diff = now - timestamp;
+    
+    if diff < 60 {
+        "Just now".to_string()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else if diff < 604800 {
+        format!("{}d ago", diff / 86400)
+    } else {
+        // Format as date if older than a week
+        let dt = chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0)
+            .unwrap_or_default();
+        dt.format("%b %d, %Y").to_string()
+    }
+}
+
 mod account_manager;
 mod error;
 mod keystorage;
@@ -328,68 +354,117 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     ui.add_space(8.0);
                 }
 
-                let table = TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::auto().at_least(30.0)) // Select
-                    .column(Column::auto().at_least(30.0)) // Star
-                    .column(Column::remainder().at_least(200.0)) // From
-                    .column(Column::remainder().at_least(300.0)) // Content
-                    .column(Column::remainder().at_least(120.0)) // Time
-                    .header(24.0, |mut header| {
-                        header.col(|ui| {
-                            ui.checkbox(&mut false, "");
-                        });
-                        header.col(|ui| {
-                            ui.label("⭐");
-                        });
-                        header.col(|ui| {
-                            ui.strong("From");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Content");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Time");
-                        });
-                    });
+                // Filter and sort events
+                let mut filtered_events: Vec<_> = app.events.iter()
+                    .filter(|event| {
+                        // Only show mail events
+                        event.kind == nostr::Kind::Custom(mail_event::MAIL_EVENT_KIND)
+                    })
+                    .collect();
 
-                table.body(|mut body| {
-                    let row_height = 40.0;
-                    let events = app.events.clone();
-                    body.rows(row_height, events.len(), |mut row| {
-                        let event = &events[row.index()];
-                        let is_selected = app.focused_post == event.id.to_string();
-                        
-                        row.col(|ui| {
-                            ui.checkbox(&mut false, "");
-                        });
-                        row.col(|ui| {
-                            ui.label("☆");
-                        });
-                        row.col(|ui| {
-                            let text = egui::RichText::new(truncate_string(&event.pubkey.to_string(), 20));
-                            ui.label(if is_selected { text.strong() } else { text });
-                        });
-                        row.col(|ui| {
-                            let text = egui::RichText::new(truncate_string(&event.content, 50));
-                            ui.label(if is_selected { text.strong() } else { text });
-                        });
-                        row.col(|ui| {
-                            let text = egui::RichText::new("2 minutes ago");
-                            ui.label(if is_selected { text.strong() } else { text });
+                // Sort by created_at in descending order (newest first)
+                filtered_events.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+                // Create a scrollable table
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let table = TableBuilder::new(ui)
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(30.0).clip(true)) // Select
+                        .column(Column::auto().at_least(30.0).clip(true)) // Star
+                        .column(Column::initial(200.0).at_least(150.0).clip(true)) // From
+                        .column(Column::remainder().at_least(300.0).clip(true)) // Subject & Content
+                        .column(Column::initial(120.0).at_least(120.0).clip(true)) // Time
+                        .header(32.0, |mut header| {
+                            header.col(|ui| {
+                                ui.checkbox(&mut false, "");
+                            });
+                            header.col(|ui| {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label("⭐");
+                                });
+                            });
+                            header.col(|ui| {
+                                ui.strong("From");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Subject & Content");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Time");
+                            });
                         });
 
-                        if row.response().clicked() {
-                            app.focused_post = event.id.to_string();
-                            app.page = Page::Post;
-                        }
+                    table.body(|mut body| {
+                        let row_height = 40.0;
+                        body.rows(row_height, filtered_events.len(), |mut row| {
+                            let event = &filtered_events[row.index()];
+                            let is_selected = app.focused_post == event.id.to_string();
+                            
+                            // Try to parse the mail event
+                            let mail_event = match mail_event::MailEvent::from_event(event) {
+                                Ok(event) => event,
+                                Err(_) => return, // Skip invalid mail events
+                            };
 
-                        // Highlight on hover
-                        if row.response().hovered() {
-                            row.response().highlight();
-                        }
+                            // Extract subject and content
+                            let subject = mail_event.rumor.tags.iter()
+                                .find(|tag| matches!(tag.kind(), nostr::TagKind::Subject))
+                                .and_then(|tag| tag.content())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "No Subject".to_string());
+
+                            let content = mail_event.rumor.content.clone();
+                            
+                            // Format the time
+                            let time_str = format_time(event.created_at.as_u64() as i64);
+
+                            // Render row
+                            let row_response = row.col(|ui| {
+                                ui.checkbox(&mut false, "");
+                            }).1;
+
+                            row.col(|ui| {
+                                ui.centered_and_justified(|ui| {
+                                    if ui.selectable_label(false, "☆").clicked() {
+                                        // TODO: Handle starring
+                                    }
+                                });
+                            });
+
+                            row.col(|ui| {
+                                let text = egui::RichText::new(truncate_string(&mail_event.sender.to_string(), 20));
+                            ui.label(if is_selected { text.strong() } else { text });
+                            });
+
+                            row.col(|ui| {
+                                ui.vertical(|ui| {
+                                    let subject_text = egui::RichText::new(&subject);
+                                    ui.label(if is_selected { subject_text.strong() } else { subject_text });
+                                    
+                                    let preview_text = egui::RichText::new(truncate_string(&content, 50))
+                                        .weak();
+                                    ui.label(preview_text);
+                                });
+                            });
+
+                            row.col(|ui| {
+                                let text = egui::RichText::new(&time_str);
+                                ui.label(text);
+                            });
+
+                            // Handle row click
+                            if row_response.clicked() {
+                                app.focused_post = event.id.to_string();
+                                app.page = Page::Post;
+                            }
+
+                            // Highlight on hover
+                            if row_response.hovered() {
+                                row_response.highlight();
+                            }
+                        });
                     });
                 });
             } else if app.page == Page::Settings {
