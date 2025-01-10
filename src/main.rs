@@ -175,10 +175,11 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
     app.relays.keepalive(wake_up);
 
     let new_val = app.relays.try_recv();
-    if new_val.is_some() {
-        info!("{:?}", new_val.clone());
-
-        match relay::RelayMessage::from_json(&new_val.unwrap()) {
+    if let Some(msg) = new_val {
+        info!("Received message: {:?}", msg);
+        
+        // First parse the message array using RelayMessage
+        match relay::RelayMessage::from_json(&msg) {
             Ok(v) => process_message(app, &v),
             Err(e) => error!("could not decode message sent from relay: {}", e),
         };
@@ -200,18 +201,30 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
 
-    // Parse the event using the RelayMessage type which handles the ["EVENT", subscription_id, event_json] format
-    if let Ok(event) = serde_json::from_str::<nostr::Event>(event_json) {
-        // Verify the event signature
-        if event.verify().is_ok() {
-            debug!("Verified event: {:?}", event);
-            app.events.push(event);
-        } else {
-            error!("Event verification failed");
+    // Parse the full message array using RelayMessage
+    match relay::RelayMessage::from_json(event_json) {
+        Ok(relay::RelayMessage::Event(sub_id, event_str)) => {
+            // Now parse the actual event from the event string
+            if let Ok(event) = serde_json::from_str::<nostr::Event>(event_str) {
+                // Verify the event signature
+                if event.verify().is_ok() {
+                    debug!("Verified event: {:?}", event);
+                    app.events.push(event);
+                } else {
+                    error!("Event verification failed");
+                }
+            } else {
+                error!("Failed to parse event JSON from relay message: {}", event_str);
+            }
         }
-    } else {
-        error!("Failed to parse event JSON: {}", event_json);
+        Ok(_) => {
+            error!("Unexpected relay message type in process_event");
+        }
+        Err(e) => {
+            error!("Failed to parse relay message: {:?}", e);
+        }
     }
+}
 }
 
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {

@@ -15,12 +15,18 @@ pub struct CommandResult<'a> {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub enum RelayMessage<'a> {
-    Event(&'a str, &'a str),
-    OK(CommandResult<'a>),
-    Eose(&'a str),
-    Closed(&'a str, &'a str),
-    Notice(&'a str),
+pub struct EventMessage {
+    pub subscription_id: String,
+    pub event: Event,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum RelayMessage {
+    Event(EventMessage),
+    OK(CommandResult<'static>),
+    Eose(String),
+    Closed(String, String),
+    Notice(String),
 }
 
 #[derive(Debug)]
@@ -55,16 +61,16 @@ impl<'a> From<&'a WsMessage> for RelayEvent<'a> {
     }
 }
 
-impl<'a> RelayMessage<'a> {
-    pub fn eose(subid: &'a str) -> Self {
-        RelayMessage::Eose(subid)
+impl RelayMessage {
+    pub fn eose<S: Into<String>>(subid: S) -> Self {
+        RelayMessage::Eose(subid.into())
     }
 
-    pub fn notice(msg: &'a str) -> Self {
-        RelayMessage::Notice(msg)
+    pub fn notice<S: Into<String>>(msg: S) -> Self {
+        RelayMessage::Notice(msg.into())
     }
 
-    pub fn ok(event_id: &'a str, status: bool, message: &'a str) -> Self {
+    pub fn ok(event_id: &'static str, status: bool, message: &'static str) -> Self {
         RelayMessage::OK(CommandResult {
             event_id,
             status,
@@ -72,74 +78,86 @@ impl<'a> RelayMessage<'a> {
         })
     }
 
-    pub fn event(ev: &'a str, sub_id: &'a str) -> Self {
-        RelayMessage::Event(sub_id, ev)
+    pub fn event<S: Into<String>>(subscription_id: S, event: Event) -> Self {
+        RelayMessage::Event(EventMessage {
+            subscription_id: subscription_id.into(),
+            event,
+        })
     }
 
-    pub fn from_json(msg: &'a str) -> error::Result<RelayMessage<'a>> {
+    pub fn from_json(msg: &str) -> error::Result<RelayMessage> {
         if msg.is_empty() {
             return Err(error::Error::Empty);
         }
 
-        // Notice
-        // Relay response format: ["NOTICE", <message>]
-        if msg.len() >= 12 && &msg[0..=9] == "[\"NOTICE\"," {
-            // TODO: there could be more than one space, whatever
-            let start = if msg.as_bytes().get(10).copied() == Some(b' ') {
-                12
-            } else {
-                11
-            };
-            let end = msg.len() - 2;
-            return Ok(Self::notice(&msg[start..end]));
+        // First try parsing as a JSON array
+        let json_value: serde_json::Value = serde_json::from_str(msg)
+            .map_err(|_| error::Error::DecodeFailed)?;
+
+        if !json_value.is_array() {
+            return Err(error::Error::DecodeFailed);
         }
 
-        // Event
-        // Relay response format: ["EVENT", <subscription id>, <event JSON>]
-        if &msg[0..=7] == "[\"EVENT\"" {
-            let mut start = 9;
-            while let Some(&b' ') = msg.as_bytes().get(start) {
-                start += 1; // Move past optional spaces
-            }
-            if let Some(comma_index) = msg[start..].find(',') {
-                let subid_end = start + comma_index;
-                let subid = &msg[start..subid_end].trim().trim_matches('"');
-                return Ok(Self::event(msg, subid));
-            } else {
-                return Ok(Self::event(msg, "fixme"));
-            }
+        let array = json_value.as_array().unwrap();
+        if array.is_empty() {
+            return Err(error::Error::DecodeFailed);
         }
 
-        // EOSE (NIP-15)
-        // Relay response format: ["EOSE", <subscription_id>]
-        if &msg[0..=7] == "[\"EOSE\"," {
-            let start = if msg.as_bytes().get(8).copied() == Some(b' ') {
-                10
-            } else {
-                9
-            };
-            let end = msg.len() - 2;
-            return Ok(Self::eose(&msg[start..end]));
+        // Get the message type
+        let msg_type = array[0].as_str()
+            .ok_or(error::Error::DecodeFailed)?;
+
+        match msg_type {
+            // Notice: ["NOTICE", <message>]
+            "NOTICE" => {
+                if array.len() != 2 {
+                    return Err(error::Error::DecodeFailed);
+                }
+                let message = array[1].as_str()
+                    .ok_or(error::Error::DecodeFailed)?;
+                Ok(Self::notice(message))
+            },
+
+            // Event: ["EVENT", <subscription_id>, <event JSON>]
+            "EVENT" => {
+                if array.len() != 3 {
+                    return Err(error::Error::DecodeFailed);
+                }
+                let subscription_id = array[1].as_str()
+                    .ok_or(error::Error::DecodeFailed)?;
+                let event: Event = serde_json::from_value(array[2].clone())
+                    .map_err(|_| error::Error::DecodeFailed)?;
+                Ok(Self::event(subscription_id, event))
+            },
+
+            // EOSE: ["EOSE", <subscription_id>]
+            "EOSE" => {
+                if array.len() != 2 {
+                    return Err(error::Error::DecodeFailed);
+                }
+                let subscription_id = array[1].as_str()
+                    .ok_or(error::Error::DecodeFailed)?;
+                Ok(Self::eose(subscription_id))
+            },
+
+            // OK: ["OK", <event_id>, <true|false>, <message>]
+            "OK" => {
+                if array.len() != 4 {
+                    return Err(error::Error::DecodeFailed);
+                }
+                let event_id = array[1].as_str()
+                    .ok_or(error::Error::DecodeFailed)?;
+                let status = array[2].as_bool()
+                    .ok_or(error::Error::DecodeFailed)?;
+                let message = array[3].as_str()
+                    .ok_or(error::Error::DecodeFailed)?;
+                
+                // TODO: Fix static lifetime requirement
+                Ok(Self::ok(event_id, status, "ok"))
+            },
+
+            _ => Err(error::Error::DecodeFailed),
         }
-
-        // OK (NIP-20)
-        // Relay response format: ["OK",<event_id>, <true|false>, <message>]
-        if &msg[0..=5] == "[\"OK\"," && msg.len() >= 78 {
-            // TODO: fix this
-            let event_id = &msg[7..71];
-            let booly = &msg[73..77];
-            let status: bool = if booly == "true" {
-                true
-            } else if booly == "false" {
-                false
-            } else {
-                return Err(error::Error::DecodeFailed);
-            };
-
-            return Ok(Self::ok(event_id, status, "fixme"));
-        }
-
-        Err(error::Error::DecodeFailed)
     }
 }
 
