@@ -3,6 +3,7 @@
 use eframe::egui::{self, FontDefinitions, Sense, Vec2b};
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
+use relay::RelayMessage;
 use std::collections::HashMap;
 use tracing::{debug, error, info, Level};
 
@@ -151,60 +152,38 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
 
     // Parse the event using the RelayMessage type which handles the ["EVENT", subscription_id, event_json] format
     if let Ok(event) = serde_json::from_str::<nostr::Event>(event_json) {
-        // Verify the event signature
-        if event.verify().is_ok() {
-            debug!("Verified event: {:?}", event);
-            app.events.push(event);
-        } else {
-            error!("Event verification failed");
-        }
+            // Verify the event signature
+            if event.verify().is_ok() {
+                debug!("Verified event: {:?}", event);
+                app.events.push(event);
+            } else {
+                error!("Event verification failed");
+            }
     } else {
         error!("Failed to parse event JSON: {}", event_json);
     }
 }
 
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
-    #[cfg(feature = "profiling")]
-    puffin::profile_function!();
+    // Render compose windows if any are open - moved outside CentralPanel
+    for window_id in app.state.compose_window.clone().into_keys() {
+        ui::compose_window::ComposeWindow::show_window(app, ctx, window_id);
+    }
 
-    if app.page == Page::Onboarding
-        || app.page == Page::OnboardingNew
-        || app.page == Page::OnboardingNewShowKey
-        || app.page == Page::OnboardingReturning
-    {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui::onboarding::OnboardingScreen::ui(app, ui);
-        });
-    } else {
-        egui::SidePanel::left("Side Navbar").show(ctx, |ui| {
-            ui.heading("Hoot");
-            if ui.button("Inbox").clicked() {
-                app.page = Page::Inbox;
-            }
-            if ui.button("Drafts").clicked() {
-                app.page = Page::Drafts;
-            }
-            if ui.button("Settings").clicked() {
-                app.page = Page::Settings;
-            }
-            if ui.button("Onboarding").clicked() {
-                app.page = Page::Onboarding;
-            }
-        });
+    egui::SidePanel::left("left_panel")
+        .default_width(200.0)
+        .show(ctx, |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(8.0);
+                // App title
+                ui.heading("Hoot");
+                ui.add_space(16.0);
 
-        egui::TopBottomPanel::top("Search").show(ctx, |ui| {
-            ui.heading("Search");
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // todo: fix
-            for window_id in app.state.compose_window.clone().into_keys() {
-                ui::compose_window::ComposeWindow::show(app, ui, window_id);
-            }
-
-            if app.page == Page::Inbox {
-                ui.label("hello there!");
-                if ui.button("Compose").clicked() {
+                // Compose button
+                if ui.add_sized(
+                    [180.0, 36.0],
+                    egui::Button::new("✉ Compose").fill(egui::Color32::from_rgb(149, 117, 205)),
+                ).clicked() {
                     let state = ui::compose_window::ComposeWindowState {
                         subject: String::new(),
                         to_field: String::new(),
@@ -215,113 +194,201 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         .compose_window
                         .insert(egui::Id::new(rand::random::<u32>()), state);
                 }
+                
+                ui.add_space(16.0);
+                
+                // Navigation items
+                let nav_items = [
+                    ("📥 Inbox", Page::Inbox, app.events.len()),
+                    ("🔄 Requests", Page::Post, 20),
+                    ("📝 Drafts", Page::Drafts, 3),
+                    ("⭐ Starred", Page::Post, 0),
+                    ("📁 Archived", Page::Post, 0),
+                    ("🗑️ Trash", Page::Post, 0),
+                ];
 
-                if ui.button("Send Test Event").clicked() {
-                    let temp_keys = nostr::Keys::generate();
-                    // todo: lmao
-                    let new_event = nostr::EventBuilder::text_note("GFY!")
-                        .sign_with_keys(&temp_keys)
-                        .unwrap();
-                    let event_json = crate::relay::ClientMessage::Event { event: new_event };
-                    let _ = &app
-                        .relays
-                        .send(ewebsock::WsMessage::Text(
-                            serde_json::to_string(&event_json).unwrap(),
-                        ))
-                        .unwrap();
+                for (label, page, count) in nav_items {
+                    let is_selected = app.page == page;
+                    let response = ui.selectable_label(is_selected, format!("{} {}", label, if count > 0 { count.to_string() } else { String::new() }));
+                    if response.clicked() {
+                        app.page = page;
+                    }
                 }
 
-                if ui.button("Get kind 1 notes").clicked() {
-                    let mut filter = nostr::types::Filter::new();
-                    filter = filter.kind(nostr::Kind::TextNote);
-                    let mut sub = crate::relay::Subscription::default();
-                    sub.filter(filter);
-                    let c_msg = crate::relay::ClientMessage::from(sub);
+                // Add flexible space to push profile to bottom
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                    ui.add_space(8.0);
+                    // Profile section
+                    ui.horizontal(|ui| {
+                        if ui.add_sized([32.0, 32.0], egui::Button::new("👤")).clicked() {
+                            app.page = Page::Settings;
+                        }
+                        if let Some(key) = app.account_manager.loaded_keys.first() {
+                            ui.label(&key.public_key().to_string()[..8]);
+                        }
+                    });
+                });
+            });
+        });
 
-                    let _ = &app
-                        .relays
-                        .send(ewebsock::WsMessage::Text(
-                            serde_json::to_string(&c_msg).unwrap(),
-                        ))
-                        .unwrap();
-                }
-
-                ui.label(format!("total events rendered: {}", app.events.len()));
-
+    egui::CentralPanel::default().show(ctx, |ui| {
+        match app.page {
+            Page::Inbox => {
+                // Top bar with search
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    let search_width = ui.available_width() - 100.0;
+                    ui.add_sized(
+                        [search_width, 32.0],
+                        egui::TextEdit::singleline(&mut String::new())
+                            .hint_text("Search")
+                            .margin(egui::vec2(8.0, 4.0))
+                    );
+                });
+                
+                ui.add_space(8.0);
+                
+                // Email list using TableBuilder
                 TableBuilder::new(ui)
-                    .column(Column::auto())
-                    .column(Column::auto())
-                    .column(Column::remainder())
-                    .column(Column::remainder())
-                    .column(Column::remainder())
+                    .column(Column::auto())  // Checkbox
+                    .column(Column::auto())  // Star
+                    .column(Column::remainder())  // Sender
+                    .column(Column::remainder())  // Content
+                    .column(Column::remainder())  // Time
                     .striped(true)
                     .sense(Sense::click())
                     .auto_shrink(Vec2b { x: false, y: false })
-                    .header(20.0, |_header| {})
+                    .header(20.0, |mut header| {
+                        header.col(|ui| {
+                            ui.checkbox(&mut false, "");
+                        });
+                        header.col(|ui| {
+                            ui.label("⭐");
+                        });
+                        header.col(|ui| {
+                            ui.label("From");
+                        });
+                        header.col(|ui| {
+                            ui.label("Content");
+                        });
+                        header.col(|ui| {
+                            ui.label("Time");
+                        });
+                    })
                     .body(|mut body| {
                         let row_height = 30.0;
                         let events = app.events.clone();
                         body.rows(row_height, events.len(), |mut row| {
                             let event = &events[row.index()];
-                            row.col(|ui| {
-                                ui.checkbox(&mut false, "");
-                            });
-                            row.col(|ui| {
-                                ui.checkbox(&mut false, "");
-                            });
-                            row.col(|ui| {
-                                ui.label(event.pubkey.to_string());
-                            });
-                            row.col(|ui| {
-                                ui.label(event.content.clone());
-                            });
-                            row.col(|ui| {
-                                ui.label("2 minutes ago");
-                            });
+                            
+                            // Try to unwrap the gift wrap
+                            if let Ok(unwrapped) = app.account_manager.unwrap_gift_wrap(event) {
+                                row.col(|ui| {
+                                    ui.checkbox(&mut false, "");
+                                });
+                                row.col(|ui| {
+                                    ui.checkbox(&mut false, "");
+                                });
+                                row.col(|ui| {
+                                    ui.label(unwrapped.sender.to_string());
+                                });
+                                row.col(|ui| {
+                                    // Try to get subject from tags
+                                    let subject = match &unwrapped.rumor.tags.find(nostr::TagKind::Subject) {
+                                        Some(s) => match s.content() {
+                                            Some(c) => format!("{}: {}", c.to_string(), unwrapped.rumor.content),
+                                            None => unwrapped.rumor.content.clone(),
+                                        },
+                                        None => unwrapped.rumor.content.clone(),
+                                    };
+                                    ui.label(subject);
+                                });
+                                row.col(|ui| {
+                                    ui.label("2 minutes ago");
+                                });
 
-                            if row.response().clicked() {
-                                println!("clicked: {}", event.content.clone());
-                                app.focused_post = event.id.to_string();
-                                app.page = Page::Post;
+                                if row.response().clicked() {
+                                    app.focused_post = event.id.to_string();
+                                    app.page = Page::Post;
+                                }
                             }
                         });
                     });
-            } else if app.page == Page::Settings {
-                ui.heading("Settings");
-                ui::settings::SettingsScreen::ui(app, ui);
-            } else if app.page == Page::Post {
-                assert!(
-                    !app.focused_post.is_empty(),
-                    "focused_post should not be empty when Page::Post"
-                );
-
-                let gift_wrapped_event = app
-                    .events
-                    .iter()
-                    .find(|&x| x.id.to_string() == app.focused_post)
-                    .expect("event id should be present inside event list");
-
-                let event_to_display = app.account_manager.unwrap_gift_wrap(gift_wrapped_event).expect("we should be able to unwrap an event we recieved");
-
-                ui.heading("View Message");
-                ui.label(format!("Content: {}", event_to_display.rumor.content));
-                ui.label(match &event_to_display.rumor.tags.find(nostr::TagKind::Subject) {
-                    Some(s) => match s.content() {
-                        Some(c) => format!("Subject: {}", c.to_string()),
-                        None => "Subject: None".to_string(),
-                    },
-                    None => "Subject: None".to_string(),
-                });
-
-                ui.label(match &event_to_display.rumor.id {
-                    Some(id) => format!("ID: {}", id.to_string()),
-                    None => "ID: None".to_string(),
-                });
-
-                ui.label(format!("Author: {}", event_to_display.sender.to_string()));
             }
-        });
-    }
+            Page::Settings => {
+                ui::settings::SettingsScreen::ui(app, ui);
+            }
+            Page::Post => {
+                if let Some(event) = app.events.iter().find(|e| e.id.to_string() == app.focused_post) {
+                    if let Ok(unwrapped) = app.account_manager.unwrap_gift_wrap(event) {
+                        // Message header section
+                        ui.add_space(8.0);
+                        ui.heading(&unwrapped.rumor.tags.find(nostr::TagKind::Subject)
+                            .and_then(|s| s.content())
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "No Subject".to_string()));
+                        
+                        // Metadata grid
+                        egui::Grid::new("email_metadata")
+                            .num_columns(2)
+                            .spacing([8.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label("From");
+                                ui.label(unwrapped.sender.to_string());
+                                ui.end_row();
+
+                                ui.label("To");
+                                ui.label(unwrapped.rumor.tags.iter()
+                                    .filter_map(|tag| tag.content())
+                                    .next()
+                                    .unwrap_or_else(|| "Unknown")
+                                    .to_string());
+                                ui.end_row();
+                            });
+
+                        ui.add_space(8.0);
+
+                        // Action buttons
+                        ui.horizontal(|ui| {
+                            if ui.button("📎 Attach").clicked() {
+                                // TODO: Handle attachment
+                            }
+                            if ui.button("📝 Edit").clicked() {
+                                // TODO: Handle edit
+                            }
+                            if ui.button("🗑️ Delete").clicked() {
+                                // TODO: Handle delete
+                            }
+                            if ui.button("↩️ Reply").clicked() {
+                                // TODO: Handle reply
+                            }
+                            if ui.button("↪️ Forward").clicked() {
+                                // TODO: Handle forward
+                            }
+                            if ui.button("⭐ Star").clicked() {
+                                // TODO: Handle star
+                            }
+                        });
+
+                        ui.add_space(16.0);
+                        ui.separator();
+                        ui.add_space(16.0);
+
+                        // Message content
+                        ui.label(&unwrapped.rumor.content);
+                    }
+                }
+            }
+            Page::Drafts => {
+                ui.heading("Drafts");
+                ui.label("Your draft messages will appear here");
+            }
+            _ => {
+                ui.heading("Coming Soon");
+                ui.label("This feature is under development");
+            }
+        }
+    });
 }
 
 impl Hoot {

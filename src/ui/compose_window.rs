@@ -15,7 +15,7 @@ pub struct ComposeWindowState {
 pub struct ComposeWindow {}
 
 impl ComposeWindow {
-    pub fn show(app: &mut crate::Hoot, ui: &mut egui::Ui, id: egui::Id) {
+    pub fn show_window(app: &mut crate::Hoot, ctx: &egui::Context, id: egui::Id) {
         let state = app
             .state
             .compose_window
@@ -23,7 +23,7 @@ impl ComposeWindow {
             .expect("no state found for id");
         egui::Window::new(&state.subject)
             .id(id)
-            .show(ui.ctx(), |ui| {
+            .show(ctx, |ui| {
                 ui.label("Hello!");
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
@@ -112,5 +112,10 @@ impl ComposeWindow {
                     }
                 });
             });
+    }
+
+    // Keep the original show method for backward compatibility
+    pub fn show(app: &mut crate::Hoot, ui: &mut egui::Ui, id: egui::Id) {
+        Self::show_window(app, ui.ctx(), id);
     }
 }
