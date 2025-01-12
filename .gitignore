@@ -11,3 +11,5 @@ test/
 *.pdb
 .DS_Store
 .idea/
+
+.credentials
