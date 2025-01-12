@@ -189,6 +189,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         to_field: String::new(),
                         content: String::new(),
                         selected_account: None,
+                        minimized: false,
                     };
                     app.state
                         .compose_window
