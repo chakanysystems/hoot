@@ -104,9 +104,20 @@ impl<'a> RelayMessage<'a> {
             if let Some(comma_index) = msg[start..].find(',') {
                 let subid_end = start + comma_index;
                 let subid = &msg[start..subid_end].trim().trim_matches('"');
-                return Ok(Self::event(msg, subid));
+                
+                // Find start of event JSON after subscription ID
+                let event_start = subid_end + 1;
+                let mut event_start = event_start;
+                while let Some(&b' ') = msg.as_bytes().get(event_start) {
+                    event_start += 1;
+                }
+                
+                // Event JSON goes until end, minus closing bracket
+                let event_json = &msg[event_start..msg.len()-1];
+                
+                return Ok(Self::event(event_json, subid));
             } else {
-                return Ok(Self::event(msg, "fixme"));
+                return Ok(Self::event("{}", "fixme")); // Empty event JSON if parsing fails
             }
         }
 
