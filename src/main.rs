@@ -13,6 +13,8 @@ mod keystorage;
 mod mail_event;
 mod relay;
 mod ui;
+// not sure if i will use this but i'm committing it for later.
+// mod threaded_event;
 
 fn main() -> Result<(), eframe::Error> {
     let (non_blocking, _guard) = tracing_appender::non_blocking(std::io::stdout()); // add log files in prod one day
