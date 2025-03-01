@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, Level};
 
 mod account_manager;
+mod db;
 mod error;
 mod keystorage;
 mod mail_event;
@@ -84,6 +85,7 @@ pub struct Hoot {
     relays: relay::RelayPool,
     events: Vec<nostr::Event>,
     account_manager: account_manager::AccountManager,
+    db: db::Db,
 }
 
 #[derive(Debug, PartialEq)]
@@ -113,7 +115,17 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
         if app.account_manager.loaded_keys.len() > 0 {
             let mut gw_sub = relay::Subscription::default();
 
-            let filter = nostr::Filter::new().kind(nostr::Kind::Custom(mail_event::MAIL_EVENT_KIND)).custom_tag(nostr::SingleLetterTag { character: nostr::Alphabet::P, uppercase: false }, app.account_manager.loaded_keys.clone().into_iter().map(|keys| keys.public_key()));
+            let filter = nostr::Filter::new().kind(nostr::Kind::GiftWrap).custom_tag(
+                nostr::SingleLetterTag {
+                    character: nostr::Alphabet::P,
+                    uppercase: false,
+                },
+                app.account_manager
+                    .loaded_keys
+                    .clone()
+                    .into_iter()
+                    .map(|keys| keys.public_key()),
+            );
             gw_sub.filter(filter);
 
             // TODO: fix error handling
@@ -154,13 +166,30 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
 
     // Parse the event using the RelayMessage type which handles the ["EVENT", subscription_id, event_json] format
     if let Ok(event) = serde_json::from_str::<nostr::Event>(event_json) {
-            // Verify the event signature
-            if event.verify().is_ok() {
-                debug!("Verified event: {:?}", event);
-                app.events.push(event);
-            } else {
-                error!("Event verification failed");
+        // Check if we already have this event
+        if let Ok(has_event) = app.db.has_event(&event.id.to_string()) {
+            if has_event {
+                debug!("Skipping already stored event: {}", event.id);
+                return;
             }
+        }
+
+        // Verify the event signature
+        if event.verify().is_ok() {
+            debug!("Verified event: {:?}", event);
+
+            // Store the event in memory
+            app.events.push(event.clone());
+
+            // Store the event in the database
+            if let Err(e) = app.db.store_mail_event(&event, &mut app.account_manager) {
+                error!("Failed to store event in database: {}", e);
+            } else {
+                debug!("Successfully stored event with id {} in database", event.id);
+            }
+        } else {
+            error!("Event verification failed for event: {}", event.id);
+        }
     } else {
         error!("Failed to parse event JSON: {}", event_json);
     }
@@ -182,10 +211,13 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui.add_space(16.0);
 
                 // Compose button
-                if ui.add_sized(
-                    [180.0, 36.0],
-                    egui::Button::new("✉ Compose").fill(egui::Color32::from_rgb(149, 117, 205)),
-                ).clicked() {
+                if ui
+                    .add_sized(
+                        [180.0, 36.0],
+                        egui::Button::new("✉ Compose").fill(egui::Color32::from_rgb(149, 117, 205)),
+                    )
+                    .clicked()
+                {
                     let state = ui::compose_window::ComposeWindowState {
                         subject: String::new(),
                         to_field: String::new(),
@@ -197,9 +229,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         .compose_window
                         .insert(egui::Id::new(rand::random::<u32>()), state);
                 }
-                
+
                 ui.add_space(16.0);
-                
+
                 // Navigation items
                 let nav_items = [
                     ("📥 Inbox", Page::Inbox, app.events.len()),
@@ -212,10 +244,24 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
 
                 for (label, page, count) in nav_items {
                     let is_selected = app.page == page;
-                    let response = ui.selectable_label(is_selected, format!("{} {}", label, if count > 0 { count.to_string() } else { String::new() }));
+                    let response = ui.selectable_label(
+                        is_selected,
+                        format!(
+                            "{} {}",
+                            label,
+                            if count > 0 {
+                                count.to_string()
+                            } else {
+                                String::new()
+                            }
+                        ),
+                    );
                     if response.clicked() {
                         app.page = page;
                     }
+                }
+                if ui.button("onboarding").clicked() {
+                    app.page = Page::OnboardingNew;
                 }
 
                 // Add flexible space to push profile to bottom
@@ -223,7 +269,10 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     ui.add_space(8.0);
                     // Profile section
                     ui.horizontal(|ui| {
-                        if ui.add_sized([32.0, 32.0], egui::Button::new("👤")).clicked() {
+                        if ui
+                            .add_sized([32.0, 32.0], egui::Button::new("👤"))
+                            .clicked()
+                        {
                             app.page = Page::Settings;
                         }
                         if let Some(key) = app.account_manager.loaded_keys.first() {
@@ -245,19 +294,19 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         [search_width, 32.0],
                         egui::TextEdit::singleline(&mut String::new())
                             .hint_text("Search")
-                            .margin(egui::vec2(8.0, 4.0))
+                            .margin(egui::vec2(8.0, 4.0)),
                     );
                 });
-                
+
                 ui.add_space(8.0);
-                
+
                 // Email list using TableBuilder
                 TableBuilder::new(ui)
-                    .column(Column::auto())  // Checkbox
-                    .column(Column::auto())  // Star
-                    .column(Column::remainder())  // Sender
-                    .column(Column::remainder())  // Content
-                    .column(Column::remainder())  // Time
+                    .column(Column::auto()) // Checkbox
+                    .column(Column::auto()) // Star
+                    .column(Column::remainder()) // Sender
+                    .column(Column::remainder()) // Content
+                    .column(Column::remainder()) // Time
                     .striped(true)
                     .sense(Sense::click())
                     .auto_shrink(Vec2b { x: false, y: false })
@@ -283,37 +332,34 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         let events = app.events.clone();
                         body.rows(row_height, events.len(), |mut row| {
                             let event = &events[row.index()];
-                            
-                            // Try to unwrap the gift wrap
-                            if let Ok(unwrapped) = app.account_manager.unwrap_gift_wrap(event) {
-                                row.col(|ui| {
-                                    ui.checkbox(&mut false, "");
-                                });
-                                row.col(|ui| {
-                                    ui.checkbox(&mut false, "");
-                                });
-                                row.col(|ui| {
-                                    ui.label(unwrapped.sender.to_string());
-                                });
-                                row.col(|ui| {
-                                    // Try to get subject from tags
-                                    let subject = match &unwrapped.rumor.tags.find(nostr::TagKind::Subject) {
-                                        Some(s) => match s.content() {
-                                            Some(c) => format!("{}: {}", c.to_string(), unwrapped.rumor.content),
-                                            None => unwrapped.rumor.content.clone(),
-                                        },
-                                        None => unwrapped.rumor.content.clone(),
-                                    };
-                                    ui.label(subject);
-                                });
-                                row.col(|ui| {
-                                    ui.label("2 minutes ago");
-                                });
 
-                                if row.response().clicked() {
-                                    app.focused_post = event.id.to_string();
-                                    app.page = Page::Post;
-                                }
+                            row.col(|ui| {
+                                ui.checkbox(&mut false, "");
+                            });
+                            row.col(|ui| {
+                                ui.checkbox(&mut false, "");
+                            });
+                            row.col(|ui| {
+                                ui.label(event.pubkey.to_string());
+                            });
+                            row.col(|ui| {
+                                // Try to get subject from tags
+                                let subject = match &event.tags.find(nostr::TagKind::Subject) {
+                                    Some(s) => match s.content() {
+                                        Some(c) => format!("{}: {}", c.to_string(), event.content),
+                                        None => event.content.clone(),
+                                    },
+                                    None => event.content.clone(),
+                                };
+                                ui.label(subject);
+                            });
+                            row.col(|ui| {
+                                ui.label("2 minutes ago");
+                            });
+
+                            if row.response().clicked() {
+                                app.focused_post = event.id.to_string();
+                                app.page = Page::Post;
                             }
                         });
                     });
@@ -322,15 +368,24 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui::settings::SettingsScreen::ui(app, ui);
             }
             Page::Post => {
-                if let Some(event) = app.events.iter().find(|e| e.id.to_string() == app.focused_post) {
+                if let Some(event) = app
+                    .events
+                    .iter()
+                    .find(|e| e.id.to_string() == app.focused_post)
+                {
                     if let Ok(unwrapped) = app.account_manager.unwrap_gift_wrap(event) {
                         // Message header section
                         ui.add_space(8.0);
-                        ui.heading(&unwrapped.rumor.tags.find(nostr::TagKind::Subject)
-                            .and_then(|s| s.content())
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "No Subject".to_string()));
-                        
+                        ui.heading(
+                            &unwrapped
+                                .rumor
+                                .tags
+                                .find(nostr::TagKind::Subject)
+                                .and_then(|s| s.content())
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "No Subject".to_string()),
+                        );
+
                         // Metadata grid
                         egui::Grid::new("email_metadata")
                             .num_columns(2)
@@ -341,11 +396,16 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 ui.end_row();
 
                                 ui.label("To");
-                                ui.label(unwrapped.rumor.tags.iter()
-                                    .filter_map(|tag| tag.content())
-                                    .next()
-                                    .unwrap_or_else(|| "Unknown")
-                                    .to_string());
+                                ui.label(
+                                    unwrapped
+                                        .rumor
+                                        .tags
+                                        .iter()
+                                        .filter_map(|tag| tag.content())
+                                        .next()
+                                        .unwrap_or_else(|| "Unknown")
+                                        .to_string(),
+                                );
                                 ui.end_row();
                             });
 
@@ -387,8 +447,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui.label("Your draft messages will appear here");
             }
             _ => {
-                ui.heading("Coming Soon");
-                ui.label("This feature is under development");
+                ui::onboarding::OnboardingScreen::ui(app, ui);
             }
         }
     });
@@ -396,7 +455,25 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
 
 impl Hoot {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let storage_dir = eframe::storage_dir("Hoot").unwrap();
+        // Create storage directory if it doesn't exist
+        let storage_dir = eframe::storage_dir("hoot").unwrap();
+        std::fs::create_dir_all(&storage_dir).unwrap();
+
+        // Create the database file path
+        let db_path = storage_dir.join("hoot.db");
+
+        // Initialize the database
+        let db = match db::Db::new(db_path) {
+            Ok(db) => {
+                info!("Database initialized successfully");
+                db
+            }
+            Err(e) => {
+                error!("Failed to initialize database: {}", e);
+                panic!("Database initialization failed: {}", e);
+            }
+        };
+
         Self {
             page: Page::Inbox,
             focused_post: "".into(),
@@ -405,6 +482,7 @@ impl Hoot {
             relays: relay::RelayPool::new(),
             events: Vec::new(),
             account_manager: account_manager::AccountManager::new(),
+            db,
         }
     }
 }
