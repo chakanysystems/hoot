@@ -30,11 +30,7 @@ impl Db {
         Ok(Self { connection: conn })
     }
 
-    /// Store a mail event in the database
-    ///
-    /// This function first attempts to unwrap the gift wrap if necessary,
-    /// and then stores the event in the database.
-    pub fn store_mail_event(
+    pub fn store_event(
         &self,
         event: &Event,
         account_manager: &mut AccountManager,
@@ -43,53 +39,33 @@ impl Db {
         let store_unwrapped =
             is_gift_wrap(event) && account_manager.unwrap_gift_wrap(event).is_ok();
 
-        // Determine what event to store
         if store_unwrapped {
-            // Unwrap succeeded, store the unwrapped event
             let unwrapped = account_manager.unwrap_gift_wrap(event).unwrap();
+            let mut rumor = unwrapped.rumor.clone();
+            rumor.ensure_id();
 
-            // Get event details from the unwrapped gift
-            let id = match unwrapped.rumor.id {
-                Some(id) => id.to_string(),
-                None => "unknown".to_string(),
-            };
-            let pubkey = unwrapped.rumor.pubkey.to_string();
-            let created_at = unwrapped.rumor.created_at.as_u64();
-            let kind = unwrapped.rumor.kind.as_u16() as u32;
-            let tags_json = json!(unwrapped.rumor.tags).to_string();
-            let content = unwrapped.rumor.content.clone();
-            let sig = unwrapped.sender.to_string(); // Use sender pubkey as signature reference
+            let id = rumor.id.expect("Invalid Gift Wrapped Event: There is no ID!").to_hex();
+            let raw = json!(rumor).to_string();
 
-            // Store the unwrapped event in the database
             self.connection.execute(
-                "INSERT OR REPLACE INTO events (id, pubkey, created_at, kind, tags, content, sig)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                (id, pubkey, created_at, kind, tags_json, content, sig),
+                "INSERT INTO events (id, raw)
+                 VALUES (?1, ?2)",
+                (id, raw),
             )?;
         } else {
-            // Use original event
-            // Convert tags to JSON string for storage
-            let tags_json = json!(event.tags).to_string();
-
-            // Get event details
             let id = event.id.to_string();
-            let pubkey = event.pubkey.to_string();
-            let created_at = event.created_at.as_u64();
-            let kind = event.kind.as_u16() as u32;
-            let sig = event.sig.to_string();
+            let raw = json!(event).to_string();
 
-            // Store the event in the database
             self.connection.execute(
-                "INSERT OR REPLACE INTO events (id, pubkey, created_at, kind, tags, content, sig)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                (id, pubkey, created_at, kind, tags_json, &event.content, sig),
+                "INSERT INTO events (id, raw)
+                 VALUES (?1, ?2)",
+                (id, raw),
             )?;
         }
 
         Ok(())
     }
 
-    /// Check if the database contains an event with the given ID
     pub fn has_event(&self, event_id: &str) -> Result<bool> {
         let count: i64 = self.connection.query_row(
             "SELECT COUNT(*) FROM events WHERE id = ?",
@@ -124,24 +100,6 @@ impl Db {
         }
 
         Ok(ids)
-    }
-
-    /// Get the JSON representation of an event by its ID
-    pub fn get_event_json(&self, event_id: &str) -> Result<Option<String>> {
-        let result = self.connection.query_row(
-            "SELECT json_object('id', id, 'pubkey', pubkey, 'created_at', created_at,
-                              'kind', kind, 'tags', json(tags), 'content', content,
-                              'sig', sig)
-             FROM events WHERE id = ?",
-            [event_id],
-            |row| row.get::<_, String>(0),
-        );
-
-        match result {
-            Ok(json) => Ok(Some(json)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
     }
 }
 

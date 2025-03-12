@@ -182,7 +182,7 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
             app.events.push(event.clone());
 
             // Store the event in the database
-            if let Err(e) = app.db.store_mail_event(&event, &mut app.account_manager) {
+            if let Err(e) = app.db.store_event(&event, &mut app.account_manager) {
                 error!("Failed to store event in database: {}", e);
             } else {
                 debug!("Successfully stored event with id {} in database", event.id);
