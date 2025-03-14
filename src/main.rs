@@ -5,6 +5,7 @@ use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
 use relay::RelayMessage;
 use std::collections::HashMap;
+use nostr::{SingleLetterTag, TagKind};
 use tracing::{debug, error, info, Level};
 
 mod account_manager;
@@ -374,17 +375,18 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     .find(|e| e.id.to_string() == app.focused_post)
                 {
                     if let Ok(unwrapped) = app.account_manager.unwrap_gift_wrap(event) {
+                        let subject = &unwrapped
+                            .rumor
+                            .tags
+                            .find(nostr::TagKind::Subject)
+                            .and_then(|s| s.content())
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "No Subject".to_string());
                         // Message header section
                         ui.add_space(8.0);
-                        ui.heading(
-                            &unwrapped
-                                .rumor
-                                .tags
-                                .find(nostr::TagKind::Subject)
-                                .and_then(|s| s.content())
-                                .map(|c| c.to_string())
-                                .unwrap_or_else(|| "No Subject".to_string()),
-                        );
+                        ui.heading(subject);
+                        let destination: Vec<&nostr::PublicKey> = unwrapped.rumor.tags.public_keys().collect();
+                        let destination_stringed = destination.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ");
 
                         // Metadata grid
                         egui::Grid::new("email_metadata")
@@ -396,16 +398,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 ui.end_row();
 
                                 ui.label("To");
-                                ui.label(
-                                    unwrapped
-                                        .rumor
-                                        .tags
-                                        .iter()
-                                        .filter_map(|tag| tag.content())
-                                        .next()
-                                        .unwrap_or_else(|| "Unknown")
-                                        .to_string(),
-                                );
+                                ui.label(destination_stringed.clone());
                                 ui.end_row();
                             });
 
@@ -423,7 +416,16 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 // TODO: Handle delete
                             }
                             if ui.button("↩️ Reply").clicked() {
-                                // TODO: Handle reply
+                                let state = ui::compose_window::ComposeWindowState {
+                                    subject: format!("Re: {}", subject),
+                                    to_field: unwrapped.sender.to_string(),
+                                    content: String::new(),
+                                    selected_account: None,
+                                    minimized: false,
+                                };
+                                app.state
+                                    .compose_window
+                                    .insert(egui::Id::new(rand::random::<u32>()), state);
                             }
                             if ui.button("↪️ Forward").clicked() {
                                 // TODO: Handle forward
