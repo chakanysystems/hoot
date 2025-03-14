@@ -22,85 +22,20 @@ impl ComposeWindow {
         let min_height = screen_rect.height().min(400.0);
         
         // First collect all window IDs and their minimized state
-        let window_states: Vec<_> = app.state.compose_window.iter()
-            .map(|(id, state)| (*id, state.minimized))
-            .collect();
-        
-        let mut should_close = false;
-        
         let state = app
             .state
             .compose_window
             .get_mut(&id)
             .expect("no state found for id");
 
-        if state.minimized {
-            // Count how many minimized windows are before this one
-            let minimized_index = window_states.iter()
-                .filter(|(other_id, is_minimized)| {
-                    *is_minimized && other_id.value() < id.value()
-                })
-                .count();
-            
-            let minimized_height = 32.0;
-            let minimized_width = 200.0;
-            let minimized_spacing = 2.0;
-            let stack_on_left = screen_rect.width() < min_width + minimized_width + 40.0;
-            
-            let window_y_offset = -(minimized_height + minimized_spacing) * (minimized_index as f32 + 1.0);
-            
-            let (anchor, anchor_pos) = if stack_on_left {
-                (egui::Align2::LEFT_BOTTOM, [20.0, window_y_offset])
-            } else {
-                (egui::Align2::RIGHT_BOTTOM, [-20.0, window_y_offset])
-            };
-            
-            egui::Window::new("📧")
-                .id(id)
-                .fixed_size([minimized_width, minimized_height])
-                .anchor(anchor, anchor_pos)
-                .title_bar(true)
-                .frame(egui::Frame::window(&ctx.style()).multiply_with_opacity(0.95))
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("📧").clicked() {
-                            state.minimized = false;
-                        }
-                        let subject = state.subject.as_str();
-                        let display_text = if subject.is_empty() {
-                            "New Message"
-                        } else {
-                            subject.get(0..20).unwrap_or(subject)
-                        };
-                        ui.label(RichText::new(display_text).size(11.0));
-                    });
-                });
-            return;
-        } else {
             egui::Window::new("New Message")
                 .id(id)
                 .default_size([min_width, min_height])
                 .min_width(300.0)
                 .min_height(200.0)
-                .anchor(egui::Align2::RIGHT_BOTTOM, [-20.0, -20.0])
                 .default_pos([screen_rect.right() - min_width - 20.0, screen_rect.bottom() - min_height - 20.0])
-                .collapsible(false)
-                .resizable(true)
                 .show(ctx, |ui| {
                     ui.vertical(|ui| {
-                        // Window controls at the top
-                        ui.horizontal(|ui| {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("❌").clicked() {
-                                    should_close = true;
-                                }
-                                if ui.button("🗕").clicked() {
-                                    state.minimized = true;
-                                }
-                                ui.add_space(ui.available_width() - 50.0); // Push buttons to the right
-                            });
-                        });
-
                         // Header section
                         ui.horizontal(|ui| {
                             ui.label("To:");
@@ -177,7 +112,6 @@ impl ComposeWindow {
                                 let events_to_send =
                                     msg.to_events(&state.selected_account.clone().unwrap());
 
-                                info!("new events! {:?}", events_to_send);
                                 // send over wire
                                 for event in events_to_send {
                                     match serde_json::to_string(&ClientMessage::Event { event: event.1 }) {
@@ -218,11 +152,6 @@ impl ComposeWindow {
                         });
                     });
                 });
-        }
-        
-        if should_close {
-            app.state.compose_window.remove(&id);
-        }
     }
 
     // Keep the original show method for backward compatibility
