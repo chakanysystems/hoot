@@ -9,10 +9,7 @@ use linux::LinuxKeyStorage;
 use macos::MacOSKeyStorage;
 
 // for macos keychain service name
-#[cfg(debug_assertions)]
-const SERVICE_NAME: &'static str = "com.chakanysystems.hoot-dev";
-#[cfg(not(debug_assertions))]
-const SERVICE_NAME: &'static str = "com.chakanysystems.hoot";
+const SERVICE_NAME: &'static str = "hoot";
 
 pub enum Error {
     IOError(std::io::Error),
@@ -37,7 +34,9 @@ impl std::fmt::Debug for Error {
             Error::Addition(key) => write!(f, "Could not add key {}", key),
             Error::Removal(key) => write!(f, "Could not remove key {}", key),
             Error::KeyNotFound => write!(f, "Could not find key in keystore"),
-            Error::UnwrappingFailed(err) => write!(f, "Couldn't unwrap gift wrapped event: {}", err)
+            Error::UnwrappingFailed(err) => {
+                write!(f, "Couldn't unwrap gift wrapped event: {}", err)
+            }
         }
     }
 }
@@ -49,7 +48,9 @@ impl std::fmt::Display for Error {
             Error::Addition(key) => write!(f, "Could not add key {}", key),
             Error::Removal(key) => write!(f, "Could not remove key {}", key),
             Error::KeyNotFound => write!(f, "Could not find key in keystore"),
-            Error::UnwrappingFailed(err) => write!(f, "Couldn't unwrap gift wrapped event: {}", err)
+            Error::UnwrappingFailed(err) => {
+                write!(f, "Couldn't unwrap gift wrapped event: {}", err)
+            }
         }
     }
 }

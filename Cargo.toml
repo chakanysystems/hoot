@@ -1,5 +1,5 @@
 [package]
-name = "hoot-app"
+name = "hoot"
 version = "0.1.0"
 authors = ["Jack Chakany <jack@chakany.systems>"]
 edition = "2021"
