@@ -1,13 +1,14 @@
 use crate::mail_event::MailMessage;
 use crate::relay::ClientMessage;
 use eframe::egui::{self, RichText};
-use nostr::{Keys, PublicKey};
+use nostr::{EventId, Keys, PublicKey};
 use tracing::{debug, error, info};
 
 #[derive(Debug, Clone)]
 pub struct ComposeWindowState {
     pub subject: String,
     pub to_field: String,
+    pub parent_events: Vec<EventId>,
     pub content: String,
     pub selected_account: Option<Keys>,
     pub minimized: bool,
@@ -106,6 +107,7 @@ impl ComposeWindow {
                                     to: recipient_keys,
                                     cc: vec![],
                                     bcc: vec![],
+                                    parent_events: state.parent_events.clone(),
                                     subject: state.subject.clone(),
                                     content: state.content.clone(),
                                 };

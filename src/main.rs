@@ -5,7 +5,8 @@ use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
 use relay::RelayMessage;
 use std::collections::HashMap;
-use nostr::{SingleLetterTag, TagKind};
+use std::str::FromStr;
+use nostr::{EventId, SingleLetterTag, TagKind};
 use tracing::{debug, error, info, Level};
 
 mod account_manager;
@@ -223,6 +224,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         subject: String::new(),
                         to_field: String::new(),
                         content: String::new(),
+                        parent_events: Vec::new(),
                         selected_account: None,
                         minimized: false,
                     };
@@ -416,10 +418,23 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 // TODO: Handle delete
                             }
                             if ui.button("↩️ Reply").clicked() {
+                                let mut parent_events: Vec<EventId> = Vec::new();
+                                parent_events.push(unwrapped.rumor.id.unwrap());
+                                for tag in unwrapped.rumor.tags {
+                                    if tag.kind() == TagKind::SingleLetter(SingleLetterTag::from_char('e').unwrap()) {
+                                        if let Some(content) = tag.content() {
+                                            match EventId::from_str(content) {
+                                                Ok(id) => parent_events.push(id),
+                                                Err(e) => error!("Error trying to add event to compose_window parent_events vec: {}", e),
+                                            }
+                                        }
+                                    }
+                                }
                                 let state = ui::compose_window::ComposeWindowState {
                                     subject: format!("Re: {}", subject),
                                     to_field: unwrapped.sender.to_string(),
                                     content: String::new(),
+                                    parent_events,
                                     selected_account: None,
                                     minimized: false,
                                 };

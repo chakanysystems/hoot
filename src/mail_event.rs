@@ -1,4 +1,4 @@
-use nostr::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind, TagStandard};
+use nostr::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind, TagStandard, EventId};
 use pollster::FutureExt as _;
 use std::collections::HashMap;
 
@@ -8,6 +8,8 @@ pub struct MailMessage {
     pub to: Vec<PublicKey>,
     pub cc: Vec<PublicKey>,
     pub bcc: Vec<PublicKey>,
+    /// The events that this message references, uses to keep track of threads.
+    pub parent_events: Vec<EventId>,
     pub subject: String,
     pub content: String,
 }
@@ -28,6 +30,10 @@ impl MailMessage {
                 vec![pubkey.to_hex().as_str(), "cc"],
             ));
             pubkeys_to_send_to.push(*pubkey);
+        }
+        
+        for event in &self.parent_events {
+            tags.push(Tag::event(*event));
         }
 
         tags.push(Tag::from_standardized(TagStandard::Subject(
