@@ -1,4 +1,4 @@
-use nostr::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind, TagStandard, EventId};
+use nostr::{Event, EventBuilder, EventId, Keys, Kind, PublicKey, Tag, TagKind, TagStandard};
 use pollster::FutureExt as _;
 use std::collections::HashMap;
 
@@ -31,7 +31,7 @@ impl MailMessage {
             ));
             pubkeys_to_send_to.push(*pubkey);
         }
-        
+
         for event in &self.parent_events {
             tags.push(Tag::event(*event));
         }

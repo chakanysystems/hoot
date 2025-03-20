@@ -107,7 +107,8 @@ impl SettingsScreen {
                     // TODO: this only updates when next frame is rendered, which can be more than
                     // a few seconds between renders. Make it so it updates every second.
                     if relay.status == crate::relay::RelayStatus::Disconnected {
-                        let next_ping = crate::relay::RELAY_RECONNECT_SECONDS - last_ping.elapsed().as_secs();
+                        let next_ping =
+                            crate::relay::RELAY_RECONNECT_SECONDS - last_ping.elapsed().as_secs();
 
                         ui.label(format!("(Attempting reconnect in {} seconds)", next_ping));
                     }

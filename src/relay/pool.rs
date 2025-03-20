@@ -4,8 +4,8 @@ use crate::relay::Subscription;
 use crate::relay::{Relay, RelayStatus};
 use ewebsock::{WsEvent, WsMessage};
 use std::collections::HashMap;
-use tracing::{error, debug};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
+use tracing::{debug, error};
 
 pub const RELAY_RECONNECT_SECONDS: u64 = 5;
 
@@ -34,7 +34,9 @@ impl RelayPool {
         let now = Instant::now();
 
         // Check disconnected relays
-        if now.duration_since(self.last_reconnect_attempt) >= Duration::from_secs(RELAY_RECONNECT_SECONDS) {
+        if now.duration_since(self.last_reconnect_attempt)
+            >= Duration::from_secs(RELAY_RECONNECT_SECONDS)
+        {
             for relay in self.relays.values_mut() {
                 if relay.status != RelayStatus::Connected {
                     relay.status = RelayStatus::Connecting;
@@ -145,7 +147,11 @@ impl RelayPool {
                 }
             }
             Pong(m) => {
-                debug!("pong recieved from {} after approx {} seconds", &url, self.last_ping.elapsed().as_secs());
+                debug!(
+                    "pong recieved from {} after approx {} seconds",
+                    &url,
+                    self.last_ping.elapsed().as_secs()
+                );
             }
             _ => {
                 // who cares

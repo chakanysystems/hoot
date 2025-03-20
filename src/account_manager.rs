@@ -1,6 +1,6 @@
-use crate::keystorage::{Error, Result, KeyStorage, KeyStorageType};
-use nostr::{Keys, Event};
+use crate::keystorage::{Error, KeyStorage, KeyStorageType, Result};
 use nostr::nips::nip59::UnwrappedGift;
+use nostr::{Event, Keys};
 use pollster::FutureExt as _;
 
 pub struct AccountManager {
@@ -15,12 +15,16 @@ impl AccountManager {
     }
 
     pub fn unwrap_gift_wrap(&mut self, gift_wrap: &Event) -> Result<UnwrappedGift> {
-        let target_pubkey = gift_wrap.tags.iter()
+        let target_pubkey = gift_wrap
+            .tags
+            .iter()
             .find(|tag| tag.kind() == "p".into())
             .and_then(|tag| tag.content())
             .ok_or(Error::KeyNotFound)?;
 
-        let target_key = self.loaded_keys.iter()
+        let target_key = self
+            .loaded_keys
+            .iter()
             .find(|key| key.public_key().to_string() == *target_pubkey)
             .ok_or(Error::KeyNotFound)?;
 
