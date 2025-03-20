@@ -2,14 +2,17 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use anyhow::Result;
+use egui_extras::Table;
 use include_dir::{include_dir, Dir};
 use nostr::{Event, Kind};
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::Connection;
 use rusqlite_migration::{Migrations, M};
 use serde_json::json;
 
 use crate::account_manager::AccountManager;
-use crate::mail_event::MAIL_EVENT_KIND;
+use crate::mail_event::{MailMessage, MAIL_EVENT_KIND};
+use crate::TableEntry;
 
 static MIGRATIONS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 
@@ -30,11 +33,7 @@ impl Db {
         Ok(Self { connection: conn })
     }
 
-    pub fn store_event(
-        &self,
-        event: &Event,
-        account_manager: &mut AccountManager,
-    ) -> Result<()> {
+    pub fn store_event(&self, event: &Event, account_manager: &mut AccountManager) -> Result<()> {
         // Try to unwrap the gift wrap if this event is a gift wrap
         let store_unwrapped =
             is_gift_wrap(event) && account_manager.unwrap_gift_wrap(event).is_ok();
@@ -44,7 +43,10 @@ impl Db {
             let mut rumor = unwrapped.rumor.clone();
             rumor.ensure_id();
 
-            let id = rumor.id.expect("Invalid Gift Wrapped Event: There is no ID!").to_hex();
+            let id = rumor
+                .id
+                .expect("Invalid Gift Wrapped Event: There is no ID!")
+                .to_hex();
             let raw = json!(rumor).to_string();
 
             self.connection.execute(
@@ -74,6 +76,41 @@ impl Db {
         )?;
 
         Ok(count > 0)
+    }
+
+    /// These messages will be displayed inside the top-level table.
+    pub fn get_top_level_messages(&self) -> Result<Vec<TableEntry>> {
+        let mut stmt = self.connection
+            .prepare(
+                "SELECT DISTINCT e.id, e.content, e.created_at, e.pubkey, jsonb_extract(value, '$[1]') AS subject
+FROM events e, json_each(e.tags) AS tag
+WHERE jsonb_extract(tag.value, '$[0]') = 'subject'
+AND (EXISTS (
+    SELECT 1
+    FROM json_each(e.tags) AS tag
+    WHERE jsonb_extract(tag.value, '$[0]') = 'e'
+)
+   OR NOT EXISTS (
+    SELECT 1
+    FROM events f, json_each(f.tags) AS tag
+    WHERE jsonb_extract(tag.value, '$[0]') = 'e'
+      AND jsonb_extract(tag.value, '$[1]') = e.id
+))
+ORDER BY created_at DESC
+            ")?;
+        let msgs_iter = stmt.query_map([], |row| {
+            Ok(TableEntry {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                created_at: row.get(2)?,
+                pubkey: row.get(3)?,
+                subject: row.get(4)?,
+            })
+        })?;
+
+        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+
+        Ok(messages)
     }
 
     /// Get all event IDs for mail events

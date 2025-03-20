@@ -3,10 +3,11 @@
 use eframe::egui::{self, FontDefinitions, Sense, Vec2b};
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
+use nostr::{EventId, SingleLetterTag, TagKind};
 use relay::RelayMessage;
+use rusqlite::types::FromSql;
 use std::collections::HashMap;
 use std::str::FromStr;
-use nostr::{EventId, SingleLetterTag, TagKind};
 use tracing::{debug, error, info, Level};
 
 mod account_manager;
@@ -18,6 +19,15 @@ mod relay;
 mod ui;
 // not sure if i will use this but i'm committing it for later.
 // mod threaded_event;
+
+// WE PROBABLY SHOULDN'T MAKE EVERYTHING A STRING, GRR!
+pub struct TableEntry {
+    pub id: String,
+    pub content: String,
+    pub subject: String,
+    pub pubkey: String,
+    pub created_at: i64,
+}
 
 fn main() -> Result<(), eframe::Error> {
     let (non_blocking, _guard) = tracing_appender::non_blocking(std::io::stdout()); // add log files in prod one day
@@ -88,6 +98,7 @@ pub struct Hoot {
     events: Vec<nostr::Event>,
     account_manager: account_manager::AccountManager,
     db: db::Db,
+    table_entries: Vec<TableEntry>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -110,6 +121,12 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
             Ok(..) => {}
             Err(v) => error!("something went wrong trying to load keys: {}", v),
         }
+
+        match app.db.get_top_level_messages() {
+            Ok(msgs) => app.table_entries = msgs,
+            Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
+        }
+
         let _ = app
             .relays
             .add_url("wss://relay.chakany.systems".to_string(), wake_up.clone());
@@ -291,6 +308,12 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
             Page::Inbox => {
                 // Top bar with search
                 ui.horizontal(|ui| {
+                    if ui.button("Refresh").clicked() {
+                        match app.db.get_top_level_messages() {
+                            Ok(msgs) => app.table_entries = msgs,
+                            Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
+                        }
+                    }
                     ui.add_space(16.0);
                     let search_width = ui.available_width() - 100.0;
                     ui.add_sized(
@@ -332,7 +355,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     })
                     .body(|mut body| {
                         let row_height = 30.0;
-                        let events = app.events.clone();
+                        let events = &app.table_entries;
                         body.rows(row_height, events.len(), |mut row| {
                             let event = &events[row.index()];
 
@@ -343,25 +366,18 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 ui.checkbox(&mut false, "");
                             });
                             row.col(|ui| {
-                                ui.label(event.pubkey.to_string());
+                                ui.label(&event.pubkey);
                             });
                             row.col(|ui| {
                                 // Try to get subject from tags
-                                let subject = match &event.tags.find(nostr::TagKind::Subject) {
-                                    Some(s) => match s.content() {
-                                        Some(c) => format!("{}: {}", c.to_string(), event.content),
-                                        None => event.content.clone(),
-                                    },
-                                    None => event.content.clone(),
-                                };
-                                ui.label(subject);
+                                ui.label(&event.subject);
                             });
                             row.col(|ui| {
-                                ui.label("2 minutes ago");
+                                ui.label(event.created_at.to_string());
                             });
 
                             if row.response().clicked() {
-                                app.focused_post = event.id.to_string();
+                                app.focused_post = event.id.clone();
                                 app.page = Page::Post;
                             }
                         });
@@ -500,6 +516,7 @@ impl Hoot {
             events: Vec::new(),
             account_manager: account_manager::AccountManager::new(),
             db,
+            table_entries: Vec::new(),
         }
     }
 }
