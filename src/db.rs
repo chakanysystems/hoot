@@ -1,10 +1,11 @@
+use std::any::Any;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use anyhow::Result;
 use egui_extras::Table;
 use include_dir::{include_dir, Dir};
-use nostr::{Event, Kind};
+use nostr::{Event, EventId, Kind, PublicKey};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::Connection;
 use rusqlite_migration::{Migrations, M};
@@ -138,6 +139,101 @@ ORDER BY created_at DESC
 
         Ok(ids)
     }
+
+    /// Fetches an entire email thread starting from a given event ID.
+    /// It traverses up to the root and down to the latest reply.
+    pub fn get_email_thread(&self, event_id: &str) -> Result<Vec<MailMessage>> {
+        // This CTE recursively finds all parent and child event IDs related to the initial event.
+        // The final SELECT now fetches the entire 'raw' JSON object for each event in the thread.
+        let query = r#"
+        WITH RECURSIVE thread AS (
+            -- 1. Start with the initial event
+            SELECT id, raw FROM events WHERE id = ?1
+            UNION
+            -- 2. Recursively find all replies to the events in the thread
+            SELECT e.id, e.raw
+            FROM events e, json_each(e.tags) AS t, thread
+            WHERE json_extract(t.value, '$[0]') = 'e' AND json_extract(t.value, '$[1]') = thread.id
+            UNION
+            -- 3. Recursively find the parent of the events in the thread
+            SELECT e.id, e.raw
+            FROM events e, thread
+            JOIN json_each(thread.raw, '$.tags') as t
+            WHERE json_extract(t.value, '$[0]') = 'e' AND e.id = json_extract(t.value, '$[1]')
+        )
+        SELECT DISTINCT raw FROM thread
+        ORDER BY json_extract(raw, '$.created_at') ASC;
+    "#;
+
+        let mut stmt = self.connection.prepare(query)?;
+        let event_iter = stmt.query_map([event_id], |row| {
+            let raw_json: String = row.get(0)?;
+
+            // Deserialize the JSON into our temporary struct.
+            let parsed_event: RawEventData = serde_json::from_str(&raw_json)
+                .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
+
+            // Process tags to extract recipients, parents, and subject.
+            let mut to = Vec::new();
+            let mut parent_events = Vec::new();
+            let mut subject = String::new();
+
+            for tag in parsed_event.tags {
+                if tag.len() >= 2 {
+                    match tag[0].as_str() {
+                        "p" => {
+                            // 'p' tags are for public keys (recipients)
+                            if let Ok(pubkey) = PublicKey::parse(&tag[1]) {
+                                to.push(pubkey);
+                            }
+                        }
+                        "e" => {
+                            // 'e' tags are for event IDs (threading)
+                            if let Ok(event_id) = EventId::parse(&tag[1]) {
+                                parent_events.push(event_id);
+                            }
+                        }
+                        "subject" => {
+                            subject = tag[1].clone();
+                        }
+                        _ => {} // Ignore other tags
+                    }
+                }
+            }
+
+            // Construct the final MailMessage struct.
+            Ok(MailMessage {
+                id: EventId::parse(&parsed_event.id).ok(),
+                created_at: Some(parsed_event.created_at),
+                content: parsed_event.content,
+                author: Some(parsed_event.pubkey),
+                subject,
+                to,
+                cc: Vec::new(),  // Assuming no 'cc' info in the event tags.
+                bcc: Vec::new(), // Assuming no 'bcc' info in the event tags.
+                parent_events: if parent_events.is_empty() {
+                    None
+                } else {
+                    Some(parent_events)
+                },
+            })
+        })?;
+
+        let thread = event_iter.collect::<Result<Vec<MailMessage>, rusqlite::Error>>()?;
+        Ok(thread)
+    }
+}
+
+use serde::Deserialize;
+/// A temporary struct to deserialize the raw JSON event from the database.
+/// This makes parsing safe and reliable.
+#[derive(Deserialize)]
+struct RawEventData {
+    id: String,
+    content: String,
+    created_at: i64,
+    tags: Vec<Vec<String>>,
+    pubkey: PublicKey,
 }
 
 /// Check if an event is a gift wrap

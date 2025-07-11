@@ -29,12 +29,13 @@ nostr = { version = "0.37.0", features = ["std", "nip59"] }
 serde = "1.0.204"
 serde_json = "1.0.121"
 pollster = "0.4.0"
-rusqlite = { version = "0.32.1", features = [
+rusqlite = { version = "0.36.0", features = [
     "chrono",
     "serde_json",
     "bundled-sqlcipher-vendored-openssl",
+    "functions",
 ] }
-rusqlite_migration = { version = "1.3.1", features = ["from-directory"] }
+rusqlite_migration = { version = "2.2.0", features = ["from-directory"] }
 anyhow = "1.0.96"
 include_dir = "0.7.4"
 

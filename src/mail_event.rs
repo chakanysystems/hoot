@@ -4,12 +4,16 @@ use std::collections::HashMap;
 
 pub const MAIL_EVENT_KIND: u16 = 2024;
 
+// The provided MailMessage struct
 pub struct MailMessage {
+    pub id: Option<EventId>,
+    pub created_at: Option<i64>,
+    pub author: Option<PublicKey>,
     pub to: Vec<PublicKey>,
     pub cc: Vec<PublicKey>,
     pub bcc: Vec<PublicKey>,
-    /// The events that this message references, uses to keep track of threads.
-    pub parent_events: Vec<EventId>,
+    /// The events that this message references, used to keep track of threads.
+    pub parent_events: Option<Vec<EventId>>,
     pub subject: String,
     pub content: String,
 }
@@ -32,8 +36,10 @@ impl MailMessage {
             pubkeys_to_send_to.push(*pubkey);
         }
 
-        for event in &self.parent_events {
-            tags.push(Tag::event(*event));
+        if let Some(parentEvents) = &self.parent_events {
+            for event in parentEvents {
+                tags.push(Tag::event(*event));
+            }
         }
 
         tags.push(Tag::from_standardized(TagStandard::Subject(

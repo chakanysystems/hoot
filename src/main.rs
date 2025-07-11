@@ -311,7 +311,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     if ui.button("Refresh").clicked() {
                         match app.db.get_top_level_messages() {
                             Ok(msgs) => app.table_entries = msgs,
-                            Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
+                            Err(e) => {
+                                error!("Could not fetch table entries to display from DB: {}", e)
+                            }
                         }
                     }
                     ui.add_space(16.0);
@@ -387,6 +389,77 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui::settings::SettingsScreen::ui(app, ui);
             }
             Page::Post => {
+                let events = app.db.get_email_thread(&app.focused_post).unwrap();
+
+                for ev in events {
+                    ui.add_space(8.0);
+                    ui.heading(&ev.subject);
+                    let destination_stringed = ev
+                        .to
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+
+                    // Metadata grid
+                    egui::Grid::new(format!("email_metadata-{:?}", ev.id))
+                        .num_columns(2)
+                        .spacing([8.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label("From");
+                            ui.label(ev.author.unwrap().to_string());
+                            ui.end_row();
+
+                            ui.label("To");
+                            ui.label(destination_stringed.clone());
+                            ui.end_row();
+                        });
+
+                    ui.add_space(8.0);
+
+                    // Action buttons
+                    ui.horizontal(|ui| {
+                        if ui.button("📎 Attach").clicked() {
+                            // TODO: Handle attachment
+                        }
+                        if ui.button("📝 Edit").clicked() {
+                            // TODO: Handle edit
+                        }
+                        if ui.button("🗑️ Delete").clicked() {
+                            // TODO: Handle delete
+                        }
+                        if ui.button("↩️ Reply").clicked() {
+                            let mut parent_events: Vec<EventId> =
+                                ev.parent_events.unwrap_or(Vec::new());
+                            parent_events.push(ev.id.unwrap());
+                            let state = ui::compose_window::ComposeWindowState {
+                                subject: format!("Re: {}", ev.subject),
+                                to_field: ev.author.unwrap().to_string(),
+                                content: String::new(),
+                                parent_events,
+                                selected_account: None,
+                                minimized: false,
+                            };
+                            app.state
+                                .compose_window
+                                .insert(egui::Id::new(rand::random::<u32>()), state);
+                        }
+                        if ui.button("↪️ Forward").clicked() {
+                            // TODO: Handle forward
+                        }
+                        if ui.button("⭐ Star").clicked() {
+                            // TODO: Handle star
+                        }
+                    });
+
+                    ui.add_space(16.0);
+                    ui.separator();
+                    ui.add_space(16.0);
+
+                    // Message content
+                    ui.label(ev.content);
+                }
+
                 if let Some(event) = app
                     .events
                     .iter()
@@ -401,77 +474,6 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| "No Subject".to_string());
                         // Message header section
-                        ui.add_space(8.0);
-                        ui.heading(subject);
-                        let destination: Vec<&nostr::PublicKey> = unwrapped.rumor.tags.public_keys().collect();
-                        let destination_stringed = destination.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ");
-
-                        // Metadata grid
-                        egui::Grid::new("email_metadata")
-                            .num_columns(2)
-                            .spacing([8.0, 4.0])
-                            .show(ui, |ui| {
-                                ui.label("From");
-                                ui.label(unwrapped.sender.to_string());
-                                ui.end_row();
-
-                                ui.label("To");
-                                ui.label(destination_stringed.clone());
-                                ui.end_row();
-                            });
-
-                        ui.add_space(8.0);
-
-                        // Action buttons
-                        ui.horizontal(|ui| {
-                            if ui.button("📎 Attach").clicked() {
-                                // TODO: Handle attachment
-                            }
-                            if ui.button("📝 Edit").clicked() {
-                                // TODO: Handle edit
-                            }
-                            if ui.button("🗑️ Delete").clicked() {
-                                // TODO: Handle delete
-                            }
-                            if ui.button("↩️ Reply").clicked() {
-                                let mut parent_events: Vec<EventId> = Vec::new();
-                                parent_events.push(unwrapped.rumor.id.unwrap());
-                                for tag in unwrapped.rumor.tags {
-                                    if tag.kind() == TagKind::SingleLetter(SingleLetterTag::from_char('e').unwrap()) {
-                                        if let Some(content) = tag.content() {
-                                            match EventId::from_str(content) {
-                                                Ok(id) => parent_events.push(id),
-                                                Err(e) => error!("Error trying to add event to compose_window parent_events vec: {}", e),
-                                            }
-                                        }
-                                    }
-                                }
-                                let state = ui::compose_window::ComposeWindowState {
-                                    subject: format!("Re: {}", subject),
-                                    to_field: unwrapped.sender.to_string(),
-                                    content: String::new(),
-                                    parent_events,
-                                    selected_account: None,
-                                    minimized: false,
-                                };
-                                app.state
-                                    .compose_window
-                                    .insert(egui::Id::new(rand::random::<u32>()), state);
-                            }
-                            if ui.button("↪️ Forward").clicked() {
-                                // TODO: Handle forward
-                            }
-                            if ui.button("⭐ Star").clicked() {
-                                // TODO: Handle star
-                            }
-                        });
-
-                        ui.add_space(16.0);
-                        ui.separator();
-                        ui.add_space(16.0);
-
-                        // Message content
-                        ui.label(&unwrapped.rumor.content);
                     }
                 }
             }

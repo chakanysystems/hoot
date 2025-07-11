@@ -107,10 +107,13 @@ impl ComposeWindow {
                             }
 
                             let mut msg = MailMessage {
+                                id: None,
+                                created_at: None,
+                                author: None,
                                 to: recipient_keys,
                                 cc: vec![],
                                 bcc: vec![],
-                                parent_events: state.parent_events.clone(),
+                                parent_events: Some(state.parent_events.clone()),
                                 subject: state.subject.clone(),
                                 content: state.content.clone(),
                             };
