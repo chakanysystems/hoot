@@ -7,12 +7,13 @@ use egui_extras::Table;
 use include_dir::{include_dir, Dir};
 use nostr::{Event, EventId, Kind, PublicKey};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use serde_json::json;
 
 use crate::account_manager::AccountManager;
 use crate::mail_event::{MailMessage, MAIL_EVENT_KIND};
+use crate::ProfileMetadata;
 use crate::TableEntry;
 
 static MIGRATIONS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/migrations");
@@ -77,6 +78,68 @@ impl Db {
         )?;
 
         Ok(count > 0)
+    }
+
+    // there is a high chance i am a retard.
+    // there is a very high chance that there is a better way to do this
+    // but it's not coming to mind! guess we'll find out.
+    // context: see profile_metadata sql definition and compare to events definition
+
+    pub fn get_profile_metadata(&self, pubkey: &str) -> Result<Option<ProfileMetadata>> {
+        let mut stmt = self
+            .connection
+            .prepare("SELECT * FROM profile_metadata WHERE pubkey = ?")?;
+
+        use anyhow::Context;
+        Ok(stmt
+            .query_one([pubkey], |row| {
+                Ok(ProfileMetadata {
+                    name: row.get(2)?,
+                    display_name: row.get(3)?,
+                    picture: row.get(4)?,
+                })
+            })
+            .optional()?)
+    }
+
+    /// This function combines `write_profile_metadata` and `pmeta_is_newer` into
+    /// one nice package.
+    pub fn update_profile_metadata(&self, event: nostr::Event) -> Result<()> {
+        if self.pmeta_is_newer(event.pubkey, event.created_at.as_u64())? {
+            // we have new information
+            self.write_profile_metadata(event)?;
+        }
+
+        Ok(())
+    }
+
+    /// This writes a raw profile metadata event to the DB.
+    pub fn write_profile_metadata(&self, event: nostr::Event) -> Result<()> {
+        if event.kind != nostr::Kind::Metadata {
+            anyhow::bail!("Event provided is not a kind 0 event.");
+        }
+
+        use nostr::JsonUtil;
+        let meta: nostr::Metadata = nostr::Metadata::from_json(event.content)?;
+
+        self.connection
+            .execute("INSERT INTO profile_metadata (pubkey, id, name, display_name, picture, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                (event.pubkey.to_string(), event.id.to_string(), meta.name, meta.display_name, meta.picture, event.created_at.as_u64())
+            )?;
+        Ok(())
+    }
+
+    /// Check to see if the created_at for the profile metadata event is newer than
+    /// what we have saved for this pubkey.
+    /// Returns true if `created_at` is newer than what is saved, and false if they are the same or older
+    /// Note to self/TODO: Look into forking the nostr crate to convert time stamps to i64.
+    fn pmeta_is_newer(&self, pubkey: nostr::PublicKey, created_at: u64) -> Result<bool> {
+        self.connection
+            .execute(
+                "SELECT EXISTS (SELECT 1 FROM profile_metadata WHERE pubkey = $1 AND created_at <= $2) AS wow;",
+                (pubkey.to_string(), created_at)
+            )?;
+        Ok(true)
     }
 
     /// These messages will be displayed inside the top-level table.

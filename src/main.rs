@@ -3,7 +3,7 @@
 use eframe::egui::{self, FontDefinitions, Sense, Vec2b};
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
-use nostr::{EventId, SingleLetterTag, TagKind};
+use nostr::{event::Kind, key::PublicKey, EventId, SingleLetterTag, TagKind};
 use relay::RelayMessage;
 use rusqlite::types::FromSql;
 use std::collections::HashMap;
@@ -15,6 +15,8 @@ mod db;
 mod error;
 mod keystorage;
 mod mail_event;
+mod profile_metadata;
+use profile_metadata::{ProfileMetadata, ProfileOption};
 mod relay;
 mod ui;
 // not sure if i will use this but i'm committing it for later.
@@ -99,12 +101,47 @@ pub struct Hoot {
     account_manager: account_manager::AccountManager,
     db: db::Db,
     table_entries: Vec<TableEntry>,
+    profile_metadata: HashMap<String, profile_metadata::ProfileOption>,
 }
 
 #[derive(Debug, PartialEq)]
 enum HootStatus {
     Initalizing,
     Ready,
+}
+
+/// This creates a background job to fetch the profile metadata IF it isn't found.
+/// here, id is the user id. eventually I need to add a type for this
+/// or use the nostr type. IDK.
+fn get_profile_metadata(app: &mut Hoot, id: String) -> Option<&ProfileOption> {
+    if !app.profile_metadata.contains_key(&id) {
+        // check if db has what we want
+        let db_metadata_opt = match app.db.get_profile_metadata(&id) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Couldn't fetch profile metadata from database: {}", e);
+                None
+            }
+        };
+
+        let mut sub = relay::Subscription::default();
+        let filter = nostr::Filter::new()
+            .kind(nostr::Kind::Metadata)
+            .author(PublicKey::from_str(&id).unwrap());
+
+        sub.filter(filter);
+
+        app.relays.add_subscription(sub);
+        // Tell that we are waiting for the metadata to come in.
+        if let Some(meta) = db_metadata_opt {
+            let val = ProfileOption::Some(meta);
+            app.profile_metadata.insert(id.clone(), val);
+            return app.profile_metadata.get(&id);
+        }
+        app.profile_metadata.insert(id, ProfileOption::Waiting);
+        return None;
+    }
+    return app.profile_metadata.get(&id);
 }
 
 fn update_app(app: &mut Hoot, ctx: &egui::Context) {
@@ -185,17 +222,34 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
 
     // Parse the event using the RelayMessage type which handles the ["EVENT", subscription_id, event_json] format
     if let Ok(event) = serde_json::from_str::<nostr::Event>(event_json) {
-        // Check if we already have this event
-        if let Ok(has_event) = app.db.has_event(&event.id.to_string()) {
-            if has_event {
-                debug!("Skipping already stored event: {}", event.id);
-                return;
-            }
-        }
-
         // Verify the event signature
         if event.verify().is_ok() {
             debug!("Verified event: {:?}", event);
+
+            // Check if we already have this event
+            if let Ok(has_event) = app.db.has_event(&event.id.to_string()) {
+                if has_event {
+                    debug!("Skipping already stored event: {}", event.id);
+                    return;
+                }
+            }
+
+            if event.kind == Kind::Metadata {
+                debug!("Got profile metadata");
+
+                let deserialized_metadata: profile_metadata::ProfileMetadata =
+                    serde_json::from_str(&event.content).unwrap();
+                app.profile_metadata.insert(
+                    event.pubkey.to_string(),
+                    ProfileOption::Some(deserialized_metadata),
+                );
+                // TODO: evaluate perf cost of clone LOL
+                match app.db.update_profile_metadata(event.clone()) {
+                    Ok(_) => { // wow who cares
+                    }
+                    Err(e) => error!("Error when saving profile metadata to DB: {}", e),
+                }
+            }
 
             // Store the event in memory
             app.events.push(event.clone());
@@ -407,11 +461,45 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         .spacing([8.0, 4.0])
                         .show(ui, |ui| {
                             ui.label("From");
-                            ui.label(ev.author.unwrap().to_string());
+                            if let Some(m) =
+                                get_profile_metadata(app, ev.author.unwrap().to_string())
+                            {
+                                match m {
+                                    ProfileOption::Waiting => {
+                                        // fuck
+                                        ui.label(ev.author.unwrap().to_string());
+                                    }
+                                    ProfileOption::Some(meta) => {
+                                        if let Some(display_name) = &meta.display_name {
+                                            ui.label(display_name);
+                                        } else {
+                                            ui.label(ev.author.unwrap().to_string());
+                                        }
+                                    }
+                                }
+                            } else {
+                                ui.label(ev.author.unwrap().to_string());
+                            }
                             ui.end_row();
 
                             ui.label("To");
-                            ui.label(destination_stringed.clone());
+                            if let Some(m) = get_profile_metadata(app, destination_stringed.clone())
+                            {
+                                match m {
+                                    ProfileOption::Waiting => {
+                                        ui.label(destination_stringed.clone());
+                                    }
+                                    ProfileOption::Some(meta) => {
+                                        if let Some(display_name) = &meta.display_name {
+                                            ui.label(display_name);
+                                        } else {
+                                            ui.label(destination_stringed.clone());
+                                        }
+                                    }
+                                }
+                            } else {
+                                ui.label(destination_stringed.clone());
+                            }
                             ui.end_row();
                         });
 
@@ -519,6 +607,7 @@ impl Hoot {
             account_manager: account_manager::AccountManager::new(),
             db,
             table_entries: Vec::new(),
+            profile_metadata: HashMap::new(),
         }
     }
 }
