@@ -81,6 +81,7 @@ pub enum Page {
     OnboardingNewShowKey,
     OnboardingReturning,
     Post,
+    Contacts,
 }
 
 // for storing the state of different components and such.
@@ -314,6 +315,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     ("⭐ Starred", Page::Post, 0),
                     ("📁 Archived", Page::Post, 0),
                     ("🗑️ Trash", Page::Post, 0),
+                    ("Contacts", Page::Contacts, 0),
                 ];
 
                 for (label, page, count) in nav_items {
@@ -438,6 +440,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                             }
                         });
                     });
+            }
+            Page::Contacts => {
+                ui.label("Hello Contacts");
             }
             Page::Settings => {
                 ui::settings::SettingsScreen::ui(app, ui);
