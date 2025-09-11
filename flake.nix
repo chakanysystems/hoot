@@ -34,10 +34,7 @@
         ];
 
         darwinPkgs = with pkgs; [
-          darwin.apple_sdk.frameworks.Security
-          darwin.apple_sdk.frameworks.OpenGL
-          darwin.apple_sdk.frameworks.CoreServices
-          darwin.apple_sdk.frameworks.AppKit
+          apple-sdk
         ];
 
         allPkgs = basePkgs ++ (if pkgs.stdenv.isDarwin then darwinPkgs else []) ++ (if pkgs.stdenv.isLinux then linuxPkgs else []);

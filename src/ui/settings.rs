@@ -1,11 +1,22 @@
-use crate::Hoot;
+use crate::{profile_metadata::ProfileOption, Hoot};
 use eframe::egui::{self, Color32, Direction, Layout, Sense, Ui, Vec2};
 use egui_tabs::Tabs;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use tracing::error;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
+pub struct ProfileMetadataEditingStatus {
+    display_name: String,
+    editing: bool,
+}
+
+#[derive(Debug, Default)]
 pub struct SettingsState {
     pub new_relay_url: String,
+    pub editing_display_name: bool,
+    pub new_display_name: String,
+    pub metadata_state: HashMap<String, RefCell<ProfileMetadataEditingStatus>>,
 }
 
 enum Tab {
@@ -61,6 +72,81 @@ impl SettingsScreen {
 
     fn profile(app: &mut Hoot, ui: &mut Ui) {
         ui.label("Your profile.");
+        use nostr::ToBech32;
+        for key in app.account_manager.loaded_keys.clone() {
+            // Get metadata about key
+            let pk_hex = key.public_key().to_hex();
+            if !app.state.settings.metadata_state.contains_key(&pk_hex) {
+                app.state.settings.metadata_state.insert(
+                    pk_hex.clone(),
+                    RefCell::new(ProfileMetadataEditingStatus::default()),
+                );
+            }
+
+            ui.label(format!("Key ID: {}", key.public_key().to_bech32().unwrap()));
+
+            let profile_metadata = crate::get_profile_metadata(app, pk_hex.clone()).clone();
+
+            ui.horizontal(|ui| {
+                let key_meta_state = app
+                    .state
+                    .settings
+                    .metadata_state
+                    .get(&pk_hex)
+                    .expect("This should have been created already");
+                let is_editing = &mut key_meta_state.borrow_mut().editing;
+                let new_display_name = &mut key_meta_state.borrow_mut().display_name;
+
+                match profile_metadata {
+                    ProfileOption::Some(meta) => {
+                        if let Some(display_name) = &meta.display_name {
+                            if *is_editing == true {
+                                ui.label("Display Name: ");
+                                ui.text_edit_singleline(new_display_name);
+                                if ui.button("Cancel").clicked() {
+                                    *is_editing = false;
+                                }
+                                if ui.button("Save").clicked() {
+                                    // update metadata
+                                    *is_editing = false;
+                                    let mut new_meta = meta.to_owned();
+                                    new_meta.display_name = Some(new_display_name.to_owned());
+                                    crate::profile_metadata::update_logged_in_profile_metadata(
+                                        app,
+                                        key.public_key(),
+                                        new_meta,
+                                    );
+                                }
+                            } else {
+                                ui.label(format!("Display Name: {}", display_name));
+                            }
+                        } else {
+                            ui.label("Display Name: Not Found");
+                        }
+                    }
+                    ProfileOption::Waiting => {
+                        if *is_editing == true {
+                            ui.label("Display Name: ");
+                            ui.text_edit_singleline(new_display_name);
+                            if ui.button("Cancel").clicked() {
+                                *is_editing = false;
+                            }
+                            if ui.button("Save").clicked() {
+                                //update metadata
+                                *is_editing = false;
+                            }
+                        } else {
+                            ui.label("Display Name: Not Found");
+                        }
+                    }
+                }
+                if *is_editing == false {
+                    if ui.button("Edit").clicked() {
+                        *is_editing = true;
+                    }
+                }
+            });
+        }
     }
 
     fn relays(app: &mut Hoot, ui: &mut Ui) {

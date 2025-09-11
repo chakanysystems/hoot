@@ -16,7 +16,7 @@ mod error;
 mod keystorage;
 mod mail_event;
 mod profile_metadata;
-use profile_metadata::{ProfileMetadata, ProfileOption};
+use profile_metadata::{get_profile_metadata, ProfileMetadata, ProfileOption};
 mod relay;
 mod ui;
 // not sure if i will use this but i'm committing it for later.
@@ -109,40 +109,6 @@ pub struct Hoot {
 enum HootStatus {
     Initalizing,
     Ready,
-}
-
-/// This creates a background job to fetch the profile metadata IF it isn't found.
-/// here, id is the user id. eventually I need to add a type for this
-/// or use the nostr type. IDK.
-fn get_profile_metadata(app: &mut Hoot, id: String) -> Option<&ProfileOption> {
-    if !app.profile_metadata.contains_key(&id) {
-        // check if db has what we want
-        let db_metadata_opt = match app.db.get_profile_metadata(&id) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Couldn't fetch profile metadata from database: {}", e);
-                None
-            }
-        };
-
-        let mut sub = relay::Subscription::default();
-        let filter = nostr::Filter::new()
-            .kind(nostr::Kind::Metadata)
-            .author(PublicKey::from_str(&id).unwrap());
-
-        sub.filter(filter);
-
-        app.relays.add_subscription(sub);
-        // Tell that we are waiting for the metadata to come in.
-        if let Some(meta) = db_metadata_opt {
-            let val = ProfileOption::Some(meta);
-            app.profile_metadata.insert(id.clone(), val);
-            return app.profile_metadata.get(&id);
-        }
-        app.profile_metadata.insert(id, ProfileOption::Waiting);
-        return None;
-    }
-    return app.profile_metadata.get(&id);
 }
 
 fn update_app(app: &mut Hoot, ctx: &egui::Context) {
@@ -466,44 +432,33 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         .spacing([8.0, 4.0])
                         .show(ui, |ui| {
                             ui.label("From");
-                            if let Some(m) =
-                                get_profile_metadata(app, ev.author.unwrap().to_string())
-                            {
-                                match m {
-                                    ProfileOption::Waiting => {
-                                        // fuck
+                            match get_profile_metadata(app, ev.author.unwrap().to_string()) {
+                                ProfileOption::Waiting => {
+                                    // fuck
+                                    ui.label(ev.author.unwrap().to_string());
+                                }
+                                ProfileOption::Some(meta) => {
+                                    if let Some(display_name) = &meta.display_name {
+                                        ui.label(display_name);
+                                    } else {
                                         ui.label(ev.author.unwrap().to_string());
                                     }
-                                    ProfileOption::Some(meta) => {
-                                        if let Some(display_name) = &meta.display_name {
-                                            ui.label(display_name);
-                                        } else {
-                                            ui.label(ev.author.unwrap().to_string());
-                                        }
-                                    }
                                 }
-                            } else {
-                                ui.label(ev.author.unwrap().to_string());
                             }
                             ui.end_row();
 
                             ui.label("To");
-                            if let Some(m) = get_profile_metadata(app, destination_stringed.clone())
-                            {
-                                match m {
-                                    ProfileOption::Waiting => {
+                            match get_profile_metadata(app, destination_stringed.clone()) {
+                                ProfileOption::Waiting => {
+                                    ui.label(destination_stringed.clone());
+                                }
+                                ProfileOption::Some(meta) => {
+                                    if let Some(display_name) = &meta.display_name {
+                                        ui.label(display_name);
+                                    } else {
                                         ui.label(destination_stringed.clone());
                                     }
-                                    ProfileOption::Some(meta) => {
-                                        if let Some(display_name) = &meta.display_name {
-                                            ui.label(display_name);
-                                        } else {
-                                            ui.label(destination_stringed.clone());
-                                        }
-                                    }
                                 }
-                            } else {
-                                ui.label(destination_stringed.clone());
                             }
                             ui.end_row();
                         });
