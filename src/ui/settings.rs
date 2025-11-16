@@ -1,9 +1,9 @@
-use crate::{profile_metadata::ProfileOption, Hoot};
+use crate::{profile_metadata::{ProfileMetadata, ProfileOption}, Hoot};
 use eframe::egui::{self, Color32, Direction, Layout, Sense, Ui, Vec2};
 use egui_tabs::Tabs;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Debug, Default)]
 pub struct ProfileMetadataEditingStatus {
@@ -94,55 +94,87 @@ impl SettingsScreen {
                     .metadata_state
                     .get(&pk_hex)
                     .expect("This should have been created already");
-                let is_editing = &mut key_meta_state.borrow_mut().editing;
-                let new_display_name = &mut key_meta_state.borrow_mut().display_name;
 
-                match profile_metadata {
-                    ProfileOption::Some(meta) => {
-                        if let Some(display_name) = &meta.display_name {
-                            if *is_editing == true {
-                                ui.label("Display Name: ");
-                                ui.text_edit_singleline(new_display_name);
-                                if ui.button("Cancel").clicked() {
-                                    *is_editing = false;
-                                }
-                                if ui.button("Save").clicked() {
-                                    // update metadata
-                                    *is_editing = false;
-                                    let mut new_meta = meta.to_owned();
-                                    new_meta.display_name = Some(new_display_name.to_owned());
-                                    crate::profile_metadata::update_logged_in_profile_metadata(
-                                        app,
-                                        key.public_key(),
-                                        new_meta,
-                                    );
+                // Track button actions and new name outside the borrow scope.
+                let mut save_clicked = false;
+                let mut cancel_clicked = false;
+                let mut edit_clicked = false;
+                let mut new_name_to_save: Option<String> = None;
+
+                {
+                    // Single mutable borrow of the RefCell; ends before we call functions needing &mut app.
+                    let mut meta_state = key_meta_state.borrow_mut();
+                    let is_editing = meta_state.editing;
+
+                    match profile_metadata.clone() {
+                        ProfileOption::Some(meta) => {
+                            if let Some(display_name) = &meta.display_name {
+                                if is_editing {
+                                    ui.label("Display Name: ");
+                                    ui.text_edit_singleline(&mut meta_state.display_name);
+                                    if ui.button("Cancel").clicked() {
+                                        cancel_clicked = true;
+                                    }
+                                    if ui.button("Save").clicked() {
+                                        save_clicked = true;
+                                        new_name_to_save = Some(meta_state.display_name.clone());
+                                    }
+                                } else {
+                                    ui.label(format!("Display Name: {}", display_name));
                                 }
                             } else {
-                                ui.label(format!("Display Name: {}", display_name));
+                                ui.label("Display Name: Not Found");
                             }
-                        } else {
-                            ui.label("Display Name: Not Found");
+                        }
+                        ProfileOption::Waiting => {
+                            if is_editing {
+                                ui.label("Display Name: ");
+                                ui.text_edit_singleline(&mut meta_state.display_name);
+                                if ui.button("Cancel").clicked() {
+                                    cancel_clicked = true;
+                                }
+                                if ui.button("Save").clicked() {
+                                    save_clicked = true;
+                                    new_name_to_save = Some(meta_state.display_name.clone());
+                                }
+                            } else {
+                                ui.label("Display Name: Not Found");
+                            }
                         }
                     }
-                    ProfileOption::Waiting => {
-                        if *is_editing == true {
-                            ui.label("Display Name: ");
-                            ui.text_edit_singleline(new_display_name);
-                            if ui.button("Cancel").clicked() {
-                                *is_editing = false;
-                            }
-                            if ui.button("Save").clicked() {
-                                //update metadata
-                                *is_editing = false;
-                            }
-                        } else {
-                            ui.label("Display Name: Not Found");
+
+                    if !is_editing {
+                        if ui.button("Edit").clicked() {
+                            edit_clicked = true;
                         }
                     }
-                }
-                if *is_editing == false {
-                    if ui.button("Edit").clicked() {
-                        *is_editing = true;
+
+                    if edit_clicked {
+                        meta_state.editing = true;
+                    }
+                    if cancel_clicked {
+                        meta_state.editing = false;
+                    }
+                    if save_clicked {
+                        meta_state.editing = false;
+                    }
+                } // borrow ends here
+
+                if save_clicked {
+                    if let Some(new_name) = new_name_to_save {
+                        let mut new_meta = match &profile_metadata {
+                            ProfileOption::Some(meta) => meta.to_owned(),
+                            ProfileOption::Waiting => ProfileMetadata::default(),
+                        };
+                        new_meta.display_name = Some(new_name);
+                        match crate::profile_metadata::update_logged_in_profile_metadata(
+                            app,
+                            key.public_key(),
+                            new_meta,
+                        ) {
+                            Ok(()) => (),
+                            Err(e) => error!("Couldn't update logged in profile metadata: {}", e),
+                        }
                     }
                 }
             });

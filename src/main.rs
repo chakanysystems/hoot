@@ -1,14 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // for windows release
 
-use eframe::egui::{self, FontDefinitions, Sense, Vec2b};
+use eframe::egui::{
+    self, Align2, Color32, ColorImage, FontDefinitions, FontId, Frame, Margin, RichText,
+    ScrollArea, Sense, TextureHandle, TextureOptions, Vec2, Vec2b,
+};
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
-use nostr::{event::Kind, key::PublicKey, EventId, SingleLetterTag, TagKind};
-use relay::RelayMessage;
-use rusqlite::types::FromSql;
-use std::collections::HashMap;
-use std::str::FromStr;
-use tracing::{debug, error, info, Level};
+use nostr::{event::Kind, EventId, SingleLetterTag, TagKind};
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{Receiver, Sender};
+use std::thread;
+use std::time::Duration;
+use tracing::{debug, error, info, warn, Level};
 
 mod account_manager;
 mod db;
@@ -23,12 +26,63 @@ mod ui;
 // mod threaded_event;
 
 // WE PROBABLY SHOULDN'T MAKE EVERYTHING A STRING, GRR!
+#[derive(Clone, Debug)]
 pub struct TableEntry {
     pub id: String,
     pub content: String,
     pub subject: String,
     pub pubkey: String,
     pub created_at: i64,
+}
+
+const CONTACT_AVATAR_SIZE: f32 = 48.0;
+
+#[derive(Clone)]
+struct Contact {
+    pub pubkey: String,
+    pub metadata: ProfileMetadata,
+}
+
+impl Contact {
+    fn display_name(&self) -> String {
+        self.metadata
+            .display_name
+            .clone()
+            .or(self.metadata.name.clone())
+            .unwrap_or_else(|| self.pubkey.clone())
+    }
+
+    fn initials(&self) -> String {
+        let fallback = self.metadata.display_name.as_deref()
+            .or(self.metadata.name.as_deref())
+            .unwrap_or(&self.pubkey);
+
+        let mut initials = fallback
+            .split_whitespace()
+            .filter_map(|segment| segment.chars().next())
+            .map(|ch| ch.to_ascii_uppercase())
+            .take(2)
+            .collect::<String>();
+
+        if initials.is_empty() {
+            initials = fallback
+                .chars()
+                .take(2)
+                .map(|ch| ch.to_ascii_uppercase())
+                .collect();
+        }
+
+        initials
+    }
+
+    fn picture_url(&self) -> Option<&str> {
+        self.metadata.picture.as_deref().filter(|url| !url.is_empty())
+    }
+}
+
+struct ContactImageMessage {
+    pub pubkey: String,
+    pub image: Option<ColorImage>,
 }
 
 fn main() -> Result<(), eframe::Error> {
@@ -103,6 +157,12 @@ pub struct Hoot {
     db: db::Db,
     table_entries: Vec<TableEntry>,
     profile_metadata: HashMap<String, profile_metadata::ProfileOption>,
+    contacts: Vec<Contact>,
+    contact_images: HashMap<String, TextureHandle>,
+    pending_contact_images: HashSet<String>,
+    failed_contact_images: HashSet<String>,
+    image_request_sender: Sender<ContactImageMessage>,
+    image_request_receiver: Receiver<ContactImageMessage>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -115,8 +175,9 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
     let ctx = ctx.clone();
+    let wake_ctx = ctx.clone();
     let wake_up = move || {
-        ctx.request_repaint();
+        wake_ctx.request_repaint();
     };
 
     if app.status == HootStatus::Initalizing {
@@ -139,7 +200,7 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
             let mut gw_sub = relay::Subscription::default();
 
             let filter = nostr::Filter::new().kind(nostr::Kind::GiftWrap).custom_tag(
-                nostr::SingleLetterTag {
+                SingleLetterTag {
                     character: nostr::Alphabet::P,
                     uppercase: false,
                 },
@@ -170,6 +231,8 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
             Err(e) => error!("could not decode message sent from relay: {}", e),
         };
     }
+
+    app.process_contact_image_queue(&ctx);
 }
 
 fn process_message(app: &mut Hoot, msg: &relay::RelayMessage) {
@@ -208,8 +271,9 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
                     serde_json::from_str(&event.content).unwrap();
                 app.profile_metadata.insert(
                     event.pubkey.to_string(),
-                    ProfileOption::Some(deserialized_metadata),
+                    ProfileOption::Some(deserialized_metadata.clone()),
                 );
+                app.upsert_contact(event.pubkey.to_string(), deserialized_metadata.clone());
                 // TODO: evaluate perf cost of clone LOL
                 match app.db.update_profile_metadata(event.clone()) {
                     Ok(_) => { // wow who cares
@@ -371,15 +435,15 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                             ui.label("From");
                         });
                         header.col(|ui| {
-                            ui.label("Content");
+                            ui.label("Subject");
                         });
                         header.col(|ui| {
                             ui.label("Time");
                         });
                     })
-                    .body(|mut body| {
+                    .body(|body| {
                         let row_height = 30.0;
-                        let events = &app.table_entries;
+                        let events: Vec<TableEntry> = app.table_entries.to_vec();
                         body.rows(row_height, events.len(), |mut row| {
                             let event = &events[row.index()];
 
@@ -390,7 +454,19 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 ui.checkbox(&mut false, "");
                             });
                             row.col(|ui| {
-                                ui.label(&event.pubkey);
+                            match get_profile_metadata(app, event.pubkey.clone()) {
+                                ProfileOption::Waiting => {
+                                    // fuck
+                                    ui.label(event.pubkey.to_string());
+                                }
+                                ProfileOption::Some(meta) => {
+                                    if let Some(display_name) = &meta.display_name {
+                                        ui.label(display_name);
+                                    } else {
+                                        ui.label(event.pubkey.to_string());
+                                    }
+                                }
+                            }
                             });
                             row.col(|ui| {
                                 // Try to get subject from tags
@@ -408,7 +484,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     });
             }
             Page::Contacts => {
-                ui.label("Hello Contacts");
+                render_contacts_page(app, ui);
             }
             Page::Settings => {
                 ui::settings::SettingsScreen::ui(app, ui);
@@ -514,10 +590,10 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     .find(|e| e.id.to_string() == app.focused_post)
                 {
                     if let Ok(unwrapped) = app.account_manager.unwrap_gift_wrap(event) {
-                        let subject = &unwrapped
+                        let _subject = &unwrapped
                             .rumor
                             .tags
-                            .find(nostr::TagKind::Subject)
+                            .find(TagKind::Subject)
                             .and_then(|s| s.content())
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| "No Subject".to_string());
@@ -537,7 +613,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
 }
 
 impl Hoot {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // Create storage directory if it doesn't exist
         let storage_dir = eframe::storage_dir("hoot").unwrap();
         std::fs::create_dir_all(&storage_dir).unwrap();
@@ -557,6 +633,30 @@ impl Hoot {
             }
         };
 
+        let contacts_data = match db.get_contacts() {
+            Ok(entries) => entries,
+            Err(err) => {
+                error!("Failed to load contacts from database: {}", err);
+                Vec::new()
+            }
+        };
+
+        let mut contacts: Vec<Contact> = contacts_data
+            .into_iter()
+            .map(|(pubkey, metadata)| Contact { pubkey, metadata })
+            .collect();
+        contacts.sort_by(|a, b| Self::contact_sort_key(a).cmp(&Self::contact_sort_key(b)));
+
+        let mut profile_metadata_cache: HashMap<String, ProfileOption> = HashMap::new();
+        for contact in &contacts {
+            profile_metadata_cache.insert(
+                contact.pubkey.clone(),
+                ProfileOption::Some(contact.metadata.clone()),
+            );
+        }
+
+        let (image_request_sender, image_request_receiver) = std::sync::mpsc::channel();
+
         Self {
             page: Page::Inbox,
             focused_post: "".into(),
@@ -567,9 +667,248 @@ impl Hoot {
             account_manager: account_manager::AccountManager::new(),
             db,
             table_entries: Vec::new(),
-            profile_metadata: HashMap::new(),
+            profile_metadata: profile_metadata_cache,
+            contacts,
+            contact_images: HashMap::new(),
+            pending_contact_images: HashSet::new(),
+            failed_contact_images: HashSet::new(),
+            image_request_sender,
+            image_request_receiver,
         }
     }
+
+    fn contact_sort_key(contact: &Contact) -> String {
+        contact
+            .metadata
+            .display_name
+            .clone()
+            .or(contact.metadata.name.clone())
+            .unwrap_or_else(|| contact.pubkey.clone())
+            .to_lowercase()
+    }
+
+    fn ensure_contact_image_request(&mut self, contact: &Contact) {
+        let Some(url) = contact.picture_url() else {
+            return;
+        };
+
+        if self.contact_images.contains_key(&contact.pubkey)
+            || self.pending_contact_images.contains(&contact.pubkey)
+            || self.failed_contact_images.contains(&contact.pubkey)
+        {
+            return;
+        }
+
+        let sender = self.image_request_sender.clone();
+        let pubkey = contact.pubkey.clone();
+        let url = url.to_string();
+
+        self.pending_contact_images.insert(pubkey.clone());
+
+        thread::spawn(move || {
+            let image = fetch_profile_image(&url);
+            if sender
+                .send(ContactImageMessage {
+                    pubkey,
+                    image,
+                })
+                .is_err()
+            {
+                debug!("Contact image receiver dropped before image arrived");
+            }
+        });
+    }
+
+    fn process_contact_image_queue(&mut self, ctx: &egui::Context) {
+        let mut updated = false;
+
+        while let Ok(message) = self.image_request_receiver.try_recv() {
+            self.pending_contact_images.remove(&message.pubkey);
+
+            if let Some(image) = message.image {
+                let texture = ctx.load_texture(
+                    format!("contact-{}", message.pubkey),
+                    image,
+                    TextureOptions::LINEAR,
+                );
+                self.contact_images.insert(message.pubkey, texture);
+            } else {
+                self.failed_contact_images.insert(message.pubkey);
+            }
+
+            updated = true;
+        }
+
+        if updated {
+            ctx.request_repaint();
+        }
+    }
+
+    fn upsert_contact(&mut self, pubkey: String, metadata: ProfileMetadata) {
+        let mut updated = false;
+
+        if let Some(existing) = self.contacts.iter_mut().find(|c| c.pubkey == pubkey) {
+            let previous_picture = existing.metadata.picture.clone();
+            existing.metadata = metadata.clone();
+            if previous_picture != existing.metadata.picture {
+                self.contact_images.remove(&existing.pubkey);
+                self.pending_contact_images.remove(&existing.pubkey);
+                self.failed_contact_images.remove(&existing.pubkey);
+            }
+            updated = true;
+        }
+
+        if !updated {
+            self.contacts.push(Contact {
+                pubkey: pubkey.clone(),
+                metadata: metadata.clone(),
+            });
+        }
+
+        self.contacts
+            .sort_by(|a, b| Self::contact_sort_key(a).cmp(&Self::contact_sort_key(b)));
+
+        self.profile_metadata
+            .insert(pubkey, ProfileOption::Some(metadata));
+    }
+}
+
+fn render_contacts_page(app: &mut Hoot, ui: &mut egui::Ui) {
+    ui.heading("Contacts");
+    ui.add_space(8.0);
+
+    if app.contacts.is_empty() {
+        ui.label("No contacts yet. Profile metadata will appear here when available.");
+        return;
+    }
+
+    ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            let total = app.contacts.len();
+
+            for index in 0..total {
+                let contact = { app.contacts[index].clone() };
+                app.ensure_contact_image_request(&contact);
+
+                Frame::group(ui.style())
+                    .inner_margin(Margin::symmetric(12.0, 8.0))
+                    .rounding(CONTACT_AVATAR_SIZE / 2.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            draw_contact_avatar(app, ui, &contact);
+                            ui.add_space(12.0);
+
+                            let display_name = contact.display_name();
+
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(display_name.clone()).strong());
+
+                                if let Some(name) = contact.metadata.name.as_ref() {
+                                    if contact.metadata.display_name.as_ref() != Some(name) {
+                                        ui.label(name);
+                                    }
+                                }
+
+                                ui.label(RichText::new(&contact.pubkey).monospace());
+                            });
+                        });
+                    });
+
+                ui.add_space(8.0);
+            }
+        });
+}
+
+fn draw_contact_avatar(app: &Hoot, ui: &mut egui::Ui, contact: &Contact) {
+    let size = Vec2::splat(CONTACT_AVATAR_SIZE);
+
+    if let Some(texture) = app.contact_images.get(&contact.pubkey) {
+        ui.add(egui::Image::new((texture.id(), size)).maintain_aspect_ratio(true));
+        return;
+    }
+
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.circle_filled(rect.center(), CONTACT_AVATAR_SIZE / 2.0, Color32::from_rgb(149, 117, 205));
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        contact.initials(),
+        FontId::proportional(18.0),
+        Color32::WHITE,
+    );
+}
+
+fn fetch_profile_image(url: &str) -> Option<ColorImage> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        debug!("Skipping unsupported contact image URL: {}", url);
+        return None;
+    }
+
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            debug!("Failed to build HTTP client for contact image: {}", err);
+            return None;
+        }
+    };
+
+    match client.get(url).send() {
+        Ok(response) => {
+            if !response.status().is_success() {
+                warn!(
+                    "Contact image request returned status {} for {}",
+                    response.status(),
+                    url
+                );
+                return None;
+            }
+
+            match response.bytes() {
+                Ok(bytes) => decode_image(bytes.as_ref()),
+                Err(err) => {
+                    debug!("Failed to read contact image bytes: {}", err);
+                    None
+                }
+            }
+        }
+        Err(err) => {
+            debug!("Failed to fetch contact image {}: {}", url, err);
+            None
+        }
+    }
+}
+
+fn decode_image(bytes: &[u8]) -> Option<ColorImage> {
+    let mut rgba = match image::load_from_memory(bytes) {
+        Ok(img) => img.to_rgba8(),
+        Err(err) => {
+            debug!("Failed to decode contact image: {}", err);
+            return None;
+        }
+    };
+
+    if rgba.width() > 256 || rgba.height() > 256 {
+        rgba = image::imageops::resize(
+            &rgba,
+            256,
+            256,
+            image::imageops::FilterType::Triangle,
+        );
+    }
+
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let pixels = rgba
+        .as_raw()
+        .chunks_exact(4)
+        .map(|chunk| Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3]))
+        .collect::<Vec<_>>();
+
+    Some(ColorImage { size, pixels })
 }
 
 impl eframe::App for Hoot {

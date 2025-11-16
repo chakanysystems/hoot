@@ -14,7 +14,7 @@ use nostr::PublicKey;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Default)]
 pub struct ProfileMetadata {
     pub name: Option<String>,
     pub display_name: Option<String>,
@@ -61,7 +61,7 @@ pub fn get_profile_metadata(app: &mut Hoot, public_key: String) -> &ProfileOptio
 
         sub.filter(filter);
 
-        app.relays.add_subscription(sub);
+        let _ = app.relays.add_subscription(sub);
         // Tell that we are waiting for the metadata to come in.
         if let Some(meta) = db_metadata_opt {
             let val = ProfileOption::Some(meta);
@@ -92,6 +92,7 @@ pub fn update_logged_in_profile_metadata(
         public_key.to_string(),
         ProfileOption::Some(metadata.to_owned()),
     );
+    app.upsert_contact(public_key.to_string(), metadata.clone());
 
     // convert into nostr event
     let serialized = serde_json::to_string(&metadata)?;
@@ -106,14 +107,14 @@ pub fn update_logged_in_profile_metadata(
 
     // write to db
     // TODO: serializing and then deserialzing is retarded. fix.
-    app.db.write_profile_metadata(event);
+    app.db.write_profile_metadata(event.clone())?;
 
     // send over wire
     // man i need to improve these ergonomics
     app.relays
         .send(ewebsock::WsMessage::Text(serde_json::to_string(
             &crate::relay::ClientMessage::Event { event },
-        )?));
+        )?)).unwrap();
 
     Ok(())
 }

@@ -70,6 +70,11 @@ impl AccountManager {
             return KeyStorageType::MacOS;
         }
 
+        #[cfg(target_os = "windows")]
+        {
+            return KeyStorageType::Windows;
+        }
+
         #[cfg(not(target_os = "linux"))]
         KeyStorageType::None
     }

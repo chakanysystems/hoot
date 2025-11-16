@@ -102,6 +102,31 @@ impl Db {
             .optional()?)
     }
 
+    pub fn get_contacts(&self) -> Result<Vec<(String, ProfileMetadata)>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT pubkey, name, display_name, picture
+             FROM profile_metadata
+             ORDER BY LOWER(COALESCE(display_name, name, pubkey))",
+        )?;
+
+        let contacts_iter = stmt.query_map([], |row| {
+            let pubkey: String = row.get(0)?;
+            let metadata = ProfileMetadata {
+                name: row.get(1)?,
+                display_name: row.get(2)?,
+                picture: row.get(3)?,
+            };
+            Ok((pubkey, metadata))
+        })?;
+
+        let mut contacts = Vec::new();
+        for contact in contacts_iter {
+            contacts.push(contact?);
+        }
+
+        Ok(contacts)
+    }
+
     /// This function combines `write_profile_metadata` and `pmeta_is_newer` into
     /// one nice package.
     pub fn update_profile_metadata(&self, event: nostr::Event) -> Result<()> {
@@ -123,7 +148,7 @@ impl Db {
         let meta: nostr::Metadata = nostr::Metadata::from_json(event.content)?;
 
         self.connection
-            .execute("INSERT INTO profile_metadata (pubkey, id, name, display_name, picture, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            .execute("REPLACE INTO profile_metadata (pubkey, id, name, display_name, picture, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 (event.pubkey.to_string(), event.id.to_string(), meta.name, meta.display_name, meta.picture, event.created_at.as_u64())
             )?;
         Ok(())

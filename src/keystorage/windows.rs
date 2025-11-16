@@ -1,16 +1,16 @@
-#![cfg(target_os = "linux")]
+#![cfg(target_os = "windows")]
 use super::{Error, KeyStorage, basic_file_storage::BasicFileStorage};
 use nostr::Keys;
 
-pub struct LinuxKeyStorage {}
+pub struct WindowsKeyStorage {}
 
-impl LinuxKeyStorage {
+impl WindowsKeyStorage {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl KeyStorage for LinuxKeyStorage {
+impl KeyStorage for WindowsKeyStorage {
     fn get_keys(&self) -> Result<Vec<Keys>, Error> {
         let bfs = BasicFileStorage::new().get_keys()?;
         Ok(bfs)
