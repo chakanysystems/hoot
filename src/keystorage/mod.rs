@@ -1,12 +1,17 @@
 use nostr::Keys;
 
+pub(self) mod basic_file_storage;
+
 mod linux;
 mod macos;
+mod windows;
 
 #[cfg(target_os = "linux")]
 use linux::LinuxKeyStorage;
 #[cfg(target_os = "macos")]
 use macos::MacOSKeyStorage;
+#[cfg(target_os = "windows")]
+use windows::WindowsKeyStorage;
 
 // for macos keychain service name
 const SERVICE_NAME: &'static str = "hoot";
@@ -61,6 +66,8 @@ pub enum KeyStorageType {
     Linux,
     #[cfg(target_os = "macos")]
     MacOS,
+    #[cfg(target_os = "windows")]
+    Windows,
 }
 
 pub trait KeyStorage {
@@ -77,6 +84,8 @@ impl KeyStorage for KeyStorageType {
             Self::Linux => LinuxKeyStorage::new().add_key(key),
             #[cfg(target_os = "macos")]
             Self::MacOS => MacOSKeyStorage::new(SERVICE_NAME).add_key(key),
+            #[cfg(target_os = "windows")]
+            Self::Windows => WindowsKeyStorage::new().add_key(key),
         }
     }
 
@@ -87,6 +96,8 @@ impl KeyStorage for KeyStorageType {
             Self::Linux => LinuxKeyStorage::new().get_keys(),
             #[cfg(target_os = "macos")]
             Self::MacOS => MacOSKeyStorage::new(SERVICE_NAME).get_keys(),
+            #[cfg(target_os = "windows")]
+            Self::Windows => WindowsKeyStorage::new().get_keys(),
         }
     }
 
@@ -97,6 +108,8 @@ impl KeyStorage for KeyStorageType {
             Self::Linux => LinuxKeyStorage::new().remove_key(key),
             #[cfg(target_os = "macos")]
             Self::MacOS => MacOSKeyStorage::new(SERVICE_NAME).remove_key(key),
+            #[cfg(target_os = "windows")]
+            Self::Windows => WindowsKeyStorage::new().remove_key(key),
         }
     }
 }
