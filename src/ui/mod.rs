@@ -1,5 +1,6 @@
 use eframe::egui;
 
+pub mod add_account_window;
 pub mod compose_window;
 pub mod onboarding;
 pub mod settings;

@@ -141,6 +141,7 @@ pub enum Page {
 // for storing the state of different components and such.
 #[derive(Default)]
 pub struct HootState {
+    pub add_account_window: HashMap<egui::Id, ui::add_account_window::AddAccountWindowState>,
     pub compose_window: HashMap<egui::Id, ui::compose_window::ComposeWindowState>,
     pub onboarding: ui::onboarding::OnboardingState,
     pub settings: ui::settings::SettingsState,
@@ -154,6 +155,7 @@ pub struct Hoot {
     relays: relay::RelayPool,
     events: Vec<nostr::Event>,
     account_manager: account_manager::AccountManager,
+    pub active_account: Option<nostr::Keys>,
     db: db::Db,
     table_entries: Vec<TableEntry>,
     profile_metadata: HashMap<String, profile_metadata::ProfileOption>,
@@ -299,7 +301,49 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
     }
 }
 
+fn get_account_display_text(app: &Hoot) -> String {
+    if let Some(key) = &app.active_account {
+        get_key_display_text(app, key)
+    } else {
+        "Select Account".to_string()
+    }
+}
+
+fn get_key_display_text(app: &Hoot, key: &nostr::Keys) -> String {
+    let pubkey = key.public_key().to_string();
+    if let Some(profile_metadata::ProfileOption::Some(meta)) = app.profile_metadata.get(&pubkey) {
+        if let Some(display_name) = &meta.display_name {
+            return display_name.clone();
+        }
+        if let Some(name) = &meta.name {
+            return name.clone();
+        }
+    }
+    // Fallback: truncated npub
+    use nostr::ToBech32;
+    let npub = key
+        .public_key()
+        .to_bech32()
+        .unwrap_or_else(|_| pubkey.clone());
+    if npub.len() > 16 {
+        format!("{}...", &npub[..16])
+    } else {
+        npub
+    }
+}
+
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
+    // Render add account windows
+    let mut account_windows_to_remove = Vec::new();
+    for window_id in app.state.add_account_window.clone().into_keys() {
+        if !ui::add_account_window::AddAccountWindow::show_window(app, ctx, window_id) {
+            account_windows_to_remove.push(window_id);
+        }
+    }
+    for id in account_windows_to_remove {
+        app.state.add_account_window.remove(&id);
+    }
+
     // Render compose windows if any are open - moved outside CentralPanel
     for window_id in app.state.compose_window.clone().into_keys() {
         ui::compose_window::ComposeWindow::show_window(app, ctx, window_id);
@@ -366,25 +410,55 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         app.page = page;
                     }
                 }
-                if ui.button("onboarding").clicked() {
-                    app.page = Page::OnboardingNew;
+                // Show onboarding for first-time users, or Add Account button for existing users
+                if app.account_manager.loaded_keys.is_empty() {
+                    if ui.button("onboarding").clicked() {
+                        app.page = Page::OnboardingNew;
+                    }
+                } else {
+                    if ui.button("+ Add Account").clicked() {
+                        let state = ui::add_account_window::AddAccountWindowState::default();
+                        app.state
+                            .add_account_window
+                            .insert(egui::Id::new(rand::random::<u32>()), state);
+                    }
                 }
 
                 // Add flexible space to push profile to bottom
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                     ui.add_space(8.0);
-                    // Profile section
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_sized([32.0, 32.0], egui::Button::new("👤"))
-                            .clicked()
-                        {
-                            app.page = Page::Settings;
-                        }
-                        if let Some(key) = app.account_manager.loaded_keys.first() {
-                            ui.label(&key.public_key().to_string()[..8]);
-                        }
-                    });
+
+                    // Account selector
+                    if !app.account_manager.loaded_keys.is_empty() {
+                        ui.label(RichText::new("Account:").size(10.0));
+                        egui::ComboBox::from_id_source("sidebar_account_selector")
+                            .selected_text(get_account_display_text(app))
+                            .width(180.0)
+                            .show_ui(ui, |ui| {
+                                for key in &app.account_manager.loaded_keys.clone() {
+                                    let display_text = get_key_display_text(app, key);
+                                    let is_selected =
+                                        app.active_account.as_ref().map(|k| k.public_key())
+                                            == Some(key.public_key());
+                                    if ui
+                                        .selectable_label(is_selected, display_text)
+                                        .clicked()
+                                    {
+                                        app.active_account = Some(key.clone());
+                                    }
+                                }
+                            });
+                    }
+
+                    ui.add_space(4.0);
+
+                    // Settings button
+                    if ui
+                        .add_sized([32.0, 32.0], egui::Button::new("⚙"))
+                        .clicked()
+                    {
+                        app.page = Page::Settings;
+                    }
                 });
             });
         });
@@ -665,6 +739,7 @@ impl Hoot {
             relays: relay::RelayPool::new(),
             events: Vec::new(),
             account_manager: account_manager::AccountManager::new(),
+            active_account: None,
             db,
             table_entries: Vec::new(),
             profile_metadata: profile_metadata_cache,
