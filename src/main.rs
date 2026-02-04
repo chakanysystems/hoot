@@ -53,7 +53,10 @@ impl Contact {
     }
 
     fn initials(&self) -> String {
-        let fallback = self.metadata.display_name.as_deref()
+        let fallback = self
+            .metadata
+            .display_name
+            .as_deref()
             .or(self.metadata.name.as_deref())
             .unwrap_or(&self.pubkey);
 
@@ -76,7 +79,10 @@ impl Contact {
     }
 
     fn picture_url(&self) -> Option<&str> {
-        self.metadata.picture.as_deref().filter(|url| !url.is_empty())
+        self.metadata
+            .picture
+            .as_deref()
+            .filter(|url| !url.is_empty())
     }
 }
 
@@ -440,10 +446,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                     let is_selected =
                                         app.active_account.as_ref().map(|k| k.public_key())
                                             == Some(key.public_key());
-                                    if ui
-                                        .selectable_label(is_selected, display_text)
-                                        .clicked()
-                                    {
+                                    if ui.selectable_label(is_selected, display_text).clicked() {
                                         app.active_account = Some(key.clone());
                                     }
                                 }
@@ -453,10 +456,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     ui.add_space(4.0);
 
                     // Settings button
-                    if ui
-                        .add_sized([32.0, 32.0], egui::Button::new("⚙"))
-                        .clicked()
-                    {
+                    if ui.add_sized([32.0, 32.0], egui::Button::new("⚙")).clicked() {
                         app.page = Page::Settings;
                     }
                 });
@@ -487,6 +487,10 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 });
 
                 ui.add_space(8.0);
+
+                if app.table_entries.len() == 0 {
+                    ui.label("I couldn't find any messages for you :(");
+                }
 
                 // Email list using TableBuilder
                 TableBuilder::new(ui)
@@ -528,19 +532,19 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 ui.checkbox(&mut false, "");
                             });
                             row.col(|ui| {
-                            match get_profile_metadata(app, event.pubkey.clone()) {
-                                ProfileOption::Waiting => {
-                                    // fuck
-                                    ui.label(event.pubkey.to_string());
-                                }
-                                ProfileOption::Some(meta) => {
-                                    if let Some(display_name) = &meta.display_name {
-                                        ui.label(display_name);
-                                    } else {
+                                match get_profile_metadata(app, event.pubkey.clone()) {
+                                    ProfileOption::Waiting => {
+                                        // fuck
                                         ui.label(event.pubkey.to_string());
                                     }
+                                    ProfileOption::Some(meta) => {
+                                        if let Some(display_name) = &meta.display_name {
+                                            ui.label(display_name);
+                                        } else {
+                                            ui.label(event.pubkey.to_string());
+                                        }
+                                    }
                                 }
-                            }
                             });
                             row.col(|ui| {
                                 // Try to get subject from tags
@@ -782,13 +786,7 @@ impl Hoot {
 
         thread::spawn(move || {
             let image = fetch_profile_image(&url);
-            if sender
-                .send(ContactImageMessage {
-                    pubkey,
-                    image,
-                })
-                .is_err()
-            {
+            if sender.send(ContactImageMessage { pubkey, image }).is_err() {
                 debug!("Contact image receiver dropped before image arrived");
             }
         });
@@ -905,7 +903,11 @@ fn draw_contact_avatar(app: &Hoot, ui: &mut egui::Ui, contact: &Contact) {
 
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.circle_filled(rect.center(), CONTACT_AVATAR_SIZE / 2.0, Color32::from_rgb(149, 117, 205));
+    painter.circle_filled(
+        rect.center(),
+        CONTACT_AVATAR_SIZE / 2.0,
+        Color32::from_rgb(149, 117, 205),
+    );
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -968,12 +970,7 @@ fn decode_image(bytes: &[u8]) -> Option<ColorImage> {
     };
 
     if rgba.width() > 256 || rgba.height() > 256 {
-        rgba = image::imageops::resize(
-            &rgba,
-            256,
-            256,
-            image::imageops::FilterType::Triangle,
-        );
+        rgba = image::imageops::resize(&rgba, 256, 256, image::imageops::FilterType::Triangle);
     }
 
     let size = [rgba.width() as usize, rgba.height() as usize];
