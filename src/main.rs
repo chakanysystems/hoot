@@ -204,6 +204,10 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
             .relays
             .add_url("wss://relay.chakany.systems".to_string(), wake_up.clone());
 
+        let _ = app
+            .relays
+            .add_url("wss://talon.quest".to_string(), wake_up.clone());
+
         if app.account_manager.loaded_keys.len() > 0 {
             let mut gw_sub = relay::Subscription::default();
 
