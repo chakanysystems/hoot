@@ -16,7 +16,6 @@ use tracing::{debug, error, info, warn, Level};
 mod account_manager;
 mod db;
 mod error;
-mod keystorage;
 mod mail_event;
 mod profile_metadata;
 use profile_metadata::{get_profile_metadata, ProfileMetadata, ProfileOption};
@@ -190,7 +189,7 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
 
     if app.status == HootStatus::Initalizing {
         info!("Initalizing Hoot...");
-        match app.account_manager.load_keys() {
+        match app.account_manager.load_keys(&app.db) {
             Ok(..) => {}
             Err(v) => error!("something went wrong trying to load keys: {}", v),
         }
@@ -694,10 +693,17 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
     });
 }
 
+// it's just to determine where to store files and also for keystorage paths and such
+// y'know?????
+#[cfg(debug_assertions)]
+pub const STORAGE_NAME: &'static str = "systems.chakany.hoot-dev";
+#[cfg(not(debug_assertions))]
+pub const STORAGE_NAME: &'static str = "systems.chakany.hoot";
+
 impl Hoot {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // Create storage directory if it doesn't exist
-        let storage_dir = eframe::storage_dir("hoot").unwrap();
+        let storage_dir = eframe::storage_dir(STORAGE_NAME).unwrap();
         std::fs::create_dir_all(&storage_dir).unwrap();
 
         // Create the database file path

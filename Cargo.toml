@@ -39,6 +39,7 @@ rusqlite = { version = "0.36.0", features = [
 rusqlite_migration = { version = "2.2.0", features = ["from-directory"] }
 anyhow = "1.0.96"
 include_dir = "0.7.4"
+keyring = { version =  "3.6.3", features = ["apple-native", "windows-native", "linux-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.0.0"

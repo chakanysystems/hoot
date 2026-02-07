@@ -1,11 +1,13 @@
 use crate::{Hoot, Page};
 use eframe::egui;
+use nostr::key::Keys;
 use tracing::error;
 
 #[derive(Default)]
 pub struct OnboardingState {
     // for nsecs, etc.
     pub secret_input: String,
+    pub generated_keys: Option<Keys>,
 }
 
 pub struct OnboardingScreen {}
@@ -40,31 +42,24 @@ impl OnboardingScreen {
         ui.label("To setup Hoot Mail, you need a nostr identity.");
 
         if ui.button("Create new keypair").clicked() {
-            let _ = app.account_manager.generate_keys();
+            app.state.onboarding.generated_keys = Some(Keys::generate());
             app.page = Page::OnboardingNewShowKey;
         }
     }
 
     fn onboarding_new_keypair_generated(app: &mut Hoot, ui: &mut egui::Ui) {
-        use crate::keystorage::KeyStorage;
         use nostr::ToBech32;
 
-        // here, we are assuming that the most recent key added is the one that was generated in
-        // onboarding_new()'s button click.
-        let first_key = app
-            .account_manager
-            .loaded_keys
-            .last()
-            .expect("wanted a key from last screen")
-            .clone();
+        let keys = app.state.onboarding.generated_keys.clone().expect("there should have been a keypair in `app.state.onboarding.generated_keys`. how did we get here?");
+
         ui.label(format!(
             "New identity: {}",
-            first_key.public_key().to_bech32().unwrap()
+            keys.public_key().to_bech32().unwrap()
         ));
 
         if ui.button("OK, Save!").clicked() {
             app.account_manager
-                .add_key(&first_key)
+                .save_keys(&app.db, &keys)
                 .expect("could not write key");
 
             app.page = Page::Inbox;
@@ -92,10 +87,14 @@ impl OnboardingScreen {
             .add_enabled(valid_key, egui::Button::new("Save"))
             .clicked()
         {
-            use crate::keystorage::KeyStorage;
             let keypair = nostr::Keys::new(parsed_secret_key.unwrap());
-            let _ = app.account_manager.add_key(&keypair);
-            let _ = app.account_manager.load_keys();
+            let _ = match app.account_manager.save_keys(&app.db, &keypair) {
+                Ok(()) => (),
+                Err(e) => {
+                    // TODO: handle errors better
+                    error!("couldn't save inputted keys {}", e);
+                }
+            };
             app.page = Page::Inbox;
         }
     }

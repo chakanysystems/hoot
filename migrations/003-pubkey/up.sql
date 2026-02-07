@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS pubkeys (
+    pubkey TEXT PRIMARY KEY NOT NULL
+);

@@ -5,7 +5,6 @@
 // Hmm that seems reasonable.
 
 use crate::{
-    keystorage::KeyStorage,
     relay::{Relay, Subscription},
     Hoot,
 };
@@ -114,7 +113,8 @@ pub fn update_logged_in_profile_metadata(
     app.relays
         .send(ewebsock::WsMessage::Text(serde_json::to_string(
             &crate::relay::ClientMessage::Event { event },
-        )?)).unwrap();
+        )?))
+        .unwrap();
 
     Ok(())
 }

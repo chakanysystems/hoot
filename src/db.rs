@@ -35,6 +35,36 @@ impl Db {
         Ok(Self { connection: conn })
     }
 
+    pub fn new_in_memory() -> Result<Self> {
+        let mut conn = Connection::open_in_memory()?;
+
+        MIGRATIONS.to_latest(&mut conn);
+
+        Ok(Self { connection: conn })
+    }
+
+    pub fn get_pubkeys(&self) -> Result<Vec<String>> {
+        let mut stmt = self.connection.prepare("SELECT pubkey FROM pubkeys;")?;
+
+        let pubkeys_iter = stmt.query_map([], |row| Ok(row.get(0)?))?;
+        let pubkeys = pubkeys_iter.collect::<Result<Vec<String>, rusqlite::Error>>()?;
+        Ok(pubkeys)
+    }
+
+    pub fn add_pubkey(&self, pubkey: String) -> Result<()> {
+        self.connection
+            .execute("INSERT INTO pubkeys (pubkey) VALUES (?1)", ((pubkey),))?;
+
+        Ok(())
+    }
+
+    pub fn delete_pubkey(&self, pubkey: String) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM pubkeys WHERE pubkey = ?1", ((pubkey),))?;
+
+        Ok(())
+    }
+
     pub fn store_event(&self, event: &Event, account_manager: &mut AccountManager) -> Result<()> {
         // Try to unwrap the gift wrap if this event is a gift wrap
         let store_unwrapped =
@@ -327,4 +357,39 @@ struct RawEventData {
 /// Check if an event is a gift wrap
 fn is_gift_wrap(event: &Event) -> bool {
     event.kind == Kind::GiftWrap
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::Keys;
+
+    #[test]
+    fn test_load_pubkey() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let pk = Keys::generate().public_key();
+        db.add_pubkey(pk.to_hex())?;
+        let saved_list = db.get_pubkeys()?;
+        assert!(saved_list.first().is_some());
+        assert_eq!(saved_list.first().unwrap(), &pk.to_hex());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_pubkey() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let pk = Keys::generate().public_key();
+        db.add_pubkey(pk.to_hex())?;
+        let saved_list = db.get_pubkeys()?;
+        assert!(saved_list.first().is_some());
+        assert_eq!(saved_list.first().unwrap(), &pk.to_hex());
+
+        db.delete_pubkey(pk.to_hex())?;
+        let saved_list = db.get_pubkeys()?;
+        assert!(saved_list.first().is_none());
+        assert!(saved_list.is_empty());
+
+        Ok(())
+    }
 }

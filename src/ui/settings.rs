@@ -1,4 +1,7 @@
-use crate::{profile_metadata::{ProfileMetadata, ProfileOption}, Hoot};
+use crate::{
+    profile_metadata::{ProfileMetadata, ProfileOption},
+    Hoot,
+};
 use eframe::egui::{self, Color32, Direction, Layout, Sense, Ui, Vec2};
 use egui_tabs::Tabs;
 use std::cell::RefCell;
@@ -249,7 +252,7 @@ impl SettingsScreen {
                 ui.horizontal(|ui| {
                     ui.label(format!("Key ID: {}", key.public_key().to_bech32().unwrap()));
                     if ui.button("Remove Key").clicked() {
-                        match app.account_manager.delete_key(&key) {
+                        match app.account_manager.delete_key(&app.db, &key) {
                             Ok(..) => {}
                             Err(v) => error!("couldn't remove key: {}", v),
                         }

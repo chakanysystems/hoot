@@ -1,5 +1,6 @@
-use crate::keystorage::KeyStorage;
-use crate::profile_metadata::{get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption};
+use crate::profile_metadata::{
+    get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption,
+};
 use crate::relay::Subscription;
 use eframe::egui::{self, RichText};
 use nostr::{Keys, PublicKey, ToBech32};
@@ -149,7 +150,13 @@ impl AddAccountWindow {
 
             let button_size = [ui.available_width() * 0.8, 60.0];
 
-            if ui.add_sized(button_size, egui::Button::new(RichText::new("Generate New Keypair").size(14.0))).clicked() {
+            if ui
+                .add_sized(
+                    button_size,
+                    egui::Button::new(RichText::new("Generate New Keypair").size(14.0)),
+                )
+                .clicked()
+            {
                 let state = app.state.add_account_window.get_mut(&id).unwrap();
                 state.mode = Some(AccountCreationMode::Generate);
                 state.error_message = None;
@@ -163,7 +170,13 @@ impl AddAccountWindow {
 
             ui.add_space(15.0);
 
-            if ui.add_sized(button_size, egui::Button::new(RichText::new("Import Existing Key").size(14.0))).clicked() {
+            if ui
+                .add_sized(
+                    button_size,
+                    egui::Button::new(RichText::new("Import Existing Key").size(14.0)),
+                )
+                .clicked()
+            {
                 let state = app.state.add_account_window.get_mut(&id).unwrap();
                 state.mode = Some(AccountCreationMode::Import);
                 state.step = AccountCreationStep::ImportKey;
@@ -178,7 +191,13 @@ impl AddAccountWindow {
         ui.add_space(5.0);
 
         // Clone data we need before entering closures
-        let mut nsec_input = app.state.add_account_window.get(&id).unwrap().nsec_input.clone();
+        let mut nsec_input = app
+            .state
+            .add_account_window
+            .get(&id)
+            .unwrap()
+            .nsec_input
+            .clone();
 
         // Text input for nsec
         ui.add_sized(
@@ -189,20 +208,22 @@ impl AddAccountWindow {
         );
 
         // Update the state with the new input
-        app.state.add_account_window.get_mut(&id).unwrap().nsec_input = nsec_input.clone();
+        app.state
+            .add_account_window
+            .get_mut(&id)
+            .unwrap()
+            .nsec_input = nsec_input.clone();
 
         // Validation indicator
         let validation_result = Self::validate_nsec(&nsec_input);
-        ui.horizontal(|ui| {
-            match &validation_result {
-                Ok(_) => {
-                    ui.colored_label(egui::Color32::GREEN, "✓ Valid nsec format");
-                }
-                Err(e) if !nsec_input.is_empty() => {
-                    ui.colored_label(egui::Color32::RED, format!("⊗ {}", e));
-                }
-                _ => {}
+        ui.horizontal(|ui| match &validation_result {
+            Ok(_) => {
+                ui.colored_label(egui::Color32::GREEN, "✓ Valid nsec format");
             }
+            Err(e) if !nsec_input.is_empty() => {
+                ui.colored_label(egui::Color32::RED, format!("⊗ {}", e));
+            }
+            _ => {}
         });
 
         ui.add_space(10.0);
@@ -211,11 +232,23 @@ impl AddAccountWindow {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let next_enabled = validation_result.is_ok();
 
-            if ui.add_enabled(next_enabled, egui::Button::new("Next")).clicked() {
+            if ui
+                .add_enabled(next_enabled, egui::Button::new("Next"))
+                .clicked()
+            {
                 if let Ok(keys) = validation_result {
                     // Check if key already exists
-                    if app.account_manager.loaded_keys.iter().any(|k| k.public_key() == keys.public_key()) {
-                        app.state.add_account_window.get_mut(&id).unwrap().error_message = Some("This account is already added".to_string());
+                    if app
+                        .account_manager
+                        .loaded_keys
+                        .iter()
+                        .any(|k| k.public_key() == keys.public_key())
+                    {
+                        app.state
+                            .add_account_window
+                            .get_mut(&id)
+                            .unwrap()
+                            .error_message = Some("This account is already added".to_string());
                     } else {
                         let pubkey_str = keys.public_key().to_string();
 
@@ -236,13 +269,16 @@ impl AddAccountWindow {
                                 debug!("Pre-filled metadata for imported key");
                             }
                             ProfileOption::Waiting => {
-                                debug!("Metadata requested from relays, will populate when received");
+                                debug!(
+                                    "Metadata requested from relays, will populate when received"
+                                );
                                 let state = app.state.add_account_window.get_mut(&id).unwrap();
                                 state.metadata_fetched = false;
                             }
                         }
 
-                        app.state.add_account_window.get_mut(&id).unwrap().step = AccountCreationStep::ConfigureMetadata;
+                        app.state.add_account_window.get_mut(&id).unwrap().step =
+                            AccountCreationStep::ConfigureMetadata;
                     }
                 }
             }
@@ -278,17 +314,39 @@ impl AddAccountWindow {
         ui.add_space(10.0);
 
         // If metadata was fetched, show indicator
-        let metadata_fetched = app.state.add_account_window.get(&id).unwrap().metadata_fetched;
+        let metadata_fetched = app
+            .state
+            .add_account_window
+            .get(&id)
+            .unwrap()
+            .metadata_fetched;
         if metadata_fetched {
             ui.colored_label(egui::Color32::LIGHT_BLUE, "ℹ Metadata loaded from relays");
             ui.add_space(5.0);
         }
 
         // Clone fields for editing
-        let mut display_name = app.state.add_account_window.get(&id).unwrap().display_name.clone();
+        let mut display_name = app
+            .state
+            .add_account_window
+            .get(&id)
+            .unwrap()
+            .display_name
+            .clone();
         let mut name = app.state.add_account_window.get(&id).unwrap().name.clone();
-        let mut picture_url = app.state.add_account_window.get(&id).unwrap().picture_url.clone();
-        let mut publish_metadata = app.state.add_account_window.get(&id).unwrap().publish_metadata;
+        let mut picture_url = app
+            .state
+            .add_account_window
+            .get(&id)
+            .unwrap()
+            .picture_url
+            .clone();
+        let mut publish_metadata = app
+            .state
+            .add_account_window
+            .get(&id)
+            .unwrap()
+            .publish_metadata;
 
         // Metadata form
         ui.label("Display Name:");
@@ -377,7 +435,10 @@ impl AddAccountWindow {
         ui.label("Public Key:");
         ui.horizontal(|ui| {
             ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
-            let npub = key.public_key().to_bech32().unwrap_or_else(|_| key.public_key().to_string());
+            let npub = key
+                .public_key()
+                .to_bech32()
+                .unwrap_or_else(|_| key.public_key().to_string());
             ui.label(&npub);
         });
         ui.add_space(10.0);
@@ -404,7 +465,10 @@ impl AddAccountWindow {
             ui.add_space(5.0);
 
             if publish_metadata {
-                ui.colored_label(egui::Color32::LIGHT_GREEN, "✓ Will publish metadata to relays");
+                ui.colored_label(
+                    egui::Color32::LIGHT_GREEN,
+                    "✓ Will publish metadata to relays",
+                );
             } else {
                 ui.label("Will not publish metadata");
             }
@@ -428,14 +492,23 @@ impl AddAccountWindow {
                     }
                     Err(e) => {
                         error!("Failed to save account: {}", e);
-                        app.state.add_account_window.get_mut(&id).unwrap().error_message = Some(e);
+                        app.state
+                            .add_account_window
+                            .get_mut(&id)
+                            .unwrap()
+                            .error_message = Some(e);
                     }
                 }
             }
 
             if ui.button("Back").clicked() {
-                app.state.add_account_window.get_mut(&id).unwrap().step = AccountCreationStep::ConfigureMetadata;
-                app.state.add_account_window.get_mut(&id).unwrap().error_message = None;
+                app.state.add_account_window.get_mut(&id).unwrap().step =
+                    AccountCreationStep::ConfigureMetadata;
+                app.state
+                    .add_account_window
+                    .get_mut(&id)
+                    .unwrap()
+                    .error_message = None;
             }
         });
 
@@ -454,16 +527,15 @@ impl AddAccountWindow {
         }
     }
 
-    fn save_account(app: &mut crate::Hoot, state: &AddAccountWindowState, key: &Keys) -> Result<(), String> {
+    fn save_account(
+        app: &mut crate::Hoot,
+        state: &AddAccountWindowState,
+        key: &Keys,
+    ) -> Result<(), String> {
         // Save the key to secure storage
         app.account_manager
-            .add_key(key)
+            .save_keys(&app.db, &key)
             .map_err(|e| format!("Failed to save key: {}", e))?;
-
-        // Reload keys to ensure consistency
-        app.account_manager
-            .load_keys()
-            .map_err(|e| format!("Failed to reload keys: {}", e))?;
 
         // Set as active account
         app.active_account = Some(key.clone());
@@ -524,15 +596,13 @@ impl AddAccountWindow {
             .map(|k| k.public_key())
             .collect();
 
-        let filter = nostr::Filter::new()
-            .kind(nostr::Kind::GiftWrap)
-            .custom_tag(
-                nostr::SingleLetterTag {
-                    character: nostr::Alphabet::P,
-                    uppercase: false,
-                },
-                public_keys,
-            );
+        let filter = nostr::Filter::new().kind(nostr::Kind::GiftWrap).custom_tag(
+            nostr::SingleLetterTag {
+                character: nostr::Alphabet::P,
+                uppercase: false,
+            },
+            public_keys,
+        );
 
         gw_sub.filter(filter);
 
