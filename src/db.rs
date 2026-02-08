@@ -29,7 +29,7 @@ pub struct Db {
 impl Db {
     pub fn new(path: PathBuf) -> Result<Self> {
         debug!("Loading database at location {:?}", path.to_str());
-        let mut conn = Connection::open(path)?;
+        let conn = Connection::open(path)?;
 
         Ok(Self { connection: conn })
     }
@@ -50,6 +50,26 @@ impl Db {
         MIGRATIONS.to_latest(&mut self.connection)?;
 
         Ok(())
+    }
+
+    pub fn is_unlocked(&self) -> bool {
+        // Try a simple query to check if the database is unlocked
+        // If the database is locked, this will fail
+        self.connection
+            .query_row("SELECT 1", [], |_| Ok(()))
+            .is_ok()
+    }
+
+    pub fn is_initialized(&self) -> bool {
+        // Check if migrations have been run by checking if any tables exist
+        // An uninitialized database won't have the schema set up yet
+        self.connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type='table' LIMIT 1",
+                [],
+                |_| Ok(()),
+            )
+            .is_ok()
     }
 
     pub fn get_pubkeys(&self) -> Result<Vec<String>> {

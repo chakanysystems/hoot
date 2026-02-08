@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // for windows release
 
+use anyhow::bail;
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontDefinitions, FontId, Frame, Margin, RichText,
     ScrollArea, Sense, TextureHandle, TextureOptions, Vec2, Vec2b,
@@ -9,8 +10,8 @@ use egui_extras::{Column, TableBuilder};
 use nostr::{event::Kind, EventId, SingleLetterTag, TagKind};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
-use std::thread;
 use std::time::Duration;
+use std::{panic, thread};
 use tracing::{debug, error, info, warn, Level};
 
 mod account_manager;
@@ -136,7 +137,7 @@ pub enum Page {
     Settings,
     // TODO: fix this mess
     Onboarding,
-    OnboardingNew,
+    OnboardingNewUser,
     OnboardingNewShowKey,
     OnboardingReturning,
     Post,
@@ -443,7 +444,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                 // Show onboarding for first-time users, or Add Account button for existing users
                 if app.account_manager.loaded_keys.is_empty() {
                     if ui.button("onboarding").clicked() {
-                        app.page = Page::OnboardingNew;
+                        app.page = Page::OnboardingNewUser;
                     }
                 } else {
                     if ui.button("+ Add Account").clicked() {
@@ -507,6 +508,10 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
 
     match app.page {
         Page::Unlock => {}
+        Page::Onboarding
+        | Page::OnboardingNewUser
+        | Page::OnboardingNewShowKey
+        | Page::OnboardingReturning => {}
         _ => render_left_panel(app, ctx),
     }
 
@@ -734,7 +739,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui::unlock_database::UnlockDatabase::ui(app, ui);
             }
             Page::Onboarding
-            | Page::OnboardingNew
+            | Page::OnboardingNewUser
             | Page::OnboardingNewShowKey
             | Page::OnboardingReturning => {
                 ui::onboarding::OnboardingScreen::ui(app, ui);
@@ -763,7 +768,7 @@ impl Hoot {
         let db_path = storage_dir.join("hoot.db");
 
         // Initialize the database
-        let db = match db::Db::new(db_path) {
+        let db = match db::Db::new(db_path.clone()) {
             Ok(db) => {
                 info!("Database initialized successfully");
                 db
@@ -776,8 +781,22 @@ impl Hoot {
 
         let (image_request_sender, image_request_receiver) = std::sync::mpsc::channel();
 
+        // check if this is our first time loading
+        let page = match std::fs::exists(storage_dir.join("done")) {
+            Ok(v) => {
+                if v {
+                    Page::Unlock
+                } else {
+                    Page::Onboarding
+                }
+            }
+            Err(e) => {
+                panic!("Couldn't check if we have already setup: {}", e);
+            }
+        };
+
         Self {
-            page: Page::Unlock,
+            page: page,
             focused_post: "".into(),
             status: HootStatus::PreUnlock,
             state: Default::default(),
