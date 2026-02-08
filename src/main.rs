@@ -141,6 +141,7 @@ pub enum Page {
     OnboardingReturning,
     Post,
     Contacts,
+    Unlock,
 }
 
 // for storing the state of different components and such.
@@ -150,6 +151,7 @@ pub struct HootState {
     pub compose_window: HashMap<egui::Id, ui::compose_window::ComposeWindowState>,
     pub onboarding: ui::onboarding::OnboardingState,
     pub settings: ui::settings::SettingsState,
+    pub unlock_database: ui::unlock_database::UnlockDatabaseState,
 }
 
 pub struct Hoot {
@@ -174,6 +176,8 @@ pub struct Hoot {
 
 #[derive(Debug, PartialEq)]
 enum HootStatus {
+    PreUnlock,
+    WaitingForUnlock,
     Initalizing,
     Ready,
 }
@@ -181,6 +185,17 @@ enum HootStatus {
 fn update_app(app: &mut Hoot, ctx: &egui::Context) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
+
+    if app.status == HootStatus::PreUnlock {
+        info!("Requesting Database Unlock before proceeding.");
+        app.status = HootStatus::WaitingForUnlock;
+        return;
+    } else if app.status == HootStatus::WaitingForUnlock {
+        // the unlock happens in the render_app function
+        // we can't do anything but wait until HootStatus is Initalizing
+        return;
+    }
+
     let ctx = ctx.clone();
     let wake_ctx = ctx.clone();
     let wake_up = move || {
@@ -225,6 +240,28 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
 
             // TODO: fix error handling
             let _ = app.relays.add_subscription(gw_sub);
+
+            let contacts_data = match app.db.get_contacts() {
+                Ok(entries) => entries,
+                Err(err) => {
+                    error!("Failed to load contacts from database: {}", err);
+                    Vec::new()
+                }
+            };
+
+            let mut contacts: Vec<Contact> = contacts_data
+                .into_iter()
+                .map(|(pubkey, metadata)| Contact { pubkey, metadata })
+                .collect();
+            contacts.sort_by(|a, b| Hoot::contact_sort_key(a).cmp(&Hoot::contact_sort_key(b)));
+
+            let mut profile_metadata_cache: HashMap<String, ProfileOption> = HashMap::new();
+            for contact in &contacts {
+                profile_metadata_cache.insert(
+                    contact.pubkey.clone(),
+                    ProfileOption::Some(contact.metadata.clone()),
+                );
+            }
         }
 
         app.status = HootStatus::Ready;
@@ -341,23 +378,7 @@ fn get_key_display_text(app: &Hoot, key: &nostr::Keys) -> String {
     }
 }
 
-fn render_app(app: &mut Hoot, ctx: &egui::Context) {
-    // Render add account windows
-    let mut account_windows_to_remove = Vec::new();
-    for window_id in app.state.add_account_window.clone().into_keys() {
-        if !ui::add_account_window::AddAccountWindow::show_window(app, ctx, window_id) {
-            account_windows_to_remove.push(window_id);
-        }
-    }
-    for id in account_windows_to_remove {
-        app.state.add_account_window.remove(&id);
-    }
-
-    // Render compose windows if any are open - moved outside CentralPanel
-    for window_id in app.state.compose_window.clone().into_keys() {
-        ui::compose_window::ComposeWindow::show_window(app, ctx, window_id);
-    }
-
+fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
     egui::SidePanel::left("left_panel")
         .default_width(200.0)
         .show(ctx, |ui| {
@@ -465,6 +486,29 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 });
             });
         });
+}
+
+fn render_app(app: &mut Hoot, ctx: &egui::Context) {
+    // Render add account windows
+    let mut account_windows_to_remove = Vec::new();
+    for window_id in app.state.add_account_window.clone().into_keys() {
+        if !ui::add_account_window::AddAccountWindow::show_window(app, ctx, window_id) {
+            account_windows_to_remove.push(window_id);
+        }
+    }
+    for id in account_windows_to_remove {
+        app.state.add_account_window.remove(&id);
+    }
+
+    // Render compose windows if any are open - moved outside CentralPanel
+    for window_id in app.state.compose_window.clone().into_keys() {
+        ui::compose_window::ComposeWindow::show_window(app, ctx, window_id);
+    }
+
+    match app.page {
+        Page::Unlock => {}
+        _ => render_left_panel(app, ctx),
+    }
 
     egui::CentralPanel::default().show(ctx, |ui| {
         match app.page {
@@ -686,8 +730,17 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui.heading("Drafts");
                 ui.label("Your draft messages will appear here");
             }
-            _ => {
+            Page::Unlock => {
+                ui::unlock_database::UnlockDatabase::ui(app, ui);
+            }
+            Page::Onboarding
+            | Page::OnboardingNew
+            | Page::OnboardingNewShowKey
+            | Page::OnboardingReturning => {
                 ui::onboarding::OnboardingScreen::ui(app, ui);
+            }
+            _ => {
+                ui.heading("Something has gone seriously wrong! Restart Hoot.");
             }
         }
     });
@@ -721,34 +774,12 @@ impl Hoot {
             }
         };
 
-        let contacts_data = match db.get_contacts() {
-            Ok(entries) => entries,
-            Err(err) => {
-                error!("Failed to load contacts from database: {}", err);
-                Vec::new()
-            }
-        };
-
-        let mut contacts: Vec<Contact> = contacts_data
-            .into_iter()
-            .map(|(pubkey, metadata)| Contact { pubkey, metadata })
-            .collect();
-        contacts.sort_by(|a, b| Self::contact_sort_key(a).cmp(&Self::contact_sort_key(b)));
-
-        let mut profile_metadata_cache: HashMap<String, ProfileOption> = HashMap::new();
-        for contact in &contacts {
-            profile_metadata_cache.insert(
-                contact.pubkey.clone(),
-                ProfileOption::Some(contact.metadata.clone()),
-            );
-        }
-
         let (image_request_sender, image_request_receiver) = std::sync::mpsc::channel();
 
         Self {
-            page: Page::Inbox,
+            page: Page::Unlock,
             focused_post: "".into(),
-            status: HootStatus::Initalizing,
+            status: HootStatus::PreUnlock,
             state: Default::default(),
             relays: relay::RelayPool::new(),
             events: Vec::new(),
@@ -756,8 +787,8 @@ impl Hoot {
             active_account: None,
             db,
             table_entries: Vec::new(),
-            profile_metadata: profile_metadata_cache,
-            contacts,
+            profile_metadata: HashMap::new(),
+            contacts: Vec::new(),
             contact_images: HashMap::new(),
             pending_contact_images: HashSet::new(),
             failed_contact_images: HashSet::new(),

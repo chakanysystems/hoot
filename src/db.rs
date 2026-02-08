@@ -10,6 +10,7 @@ use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use serde_json::json;
+use tracing::{debug, info};
 
 use crate::account_manager::AccountManager;
 use crate::mail_event::{MailMessage, MAIL_EVENT_KIND};
@@ -27,10 +28,8 @@ pub struct Db {
 
 impl Db {
     pub fn new(path: PathBuf) -> Result<Self> {
+        debug!("Loading database at location {:?}", path.to_str());
         let mut conn = Connection::open(path)?;
-
-        // Apply migrations
-        MIGRATIONS.to_latest(&mut conn)?;
 
         Ok(Self { connection: conn })
     }
@@ -41,6 +40,16 @@ impl Db {
         MIGRATIONS.to_latest(&mut conn);
 
         Ok(Self { connection: conn })
+    }
+
+    pub fn unlock_with_password(&mut self, password: String) -> Result<()> {
+        self.connection.pragma_update(None, "key", password)?;
+
+        // Apply migrations
+        info!("Running Migrations");
+        MIGRATIONS.to_latest(&mut self.connection)?;
+
+        Ok(())
     }
 
     pub fn get_pubkeys(&self) -> Result<Vec<String>> {
