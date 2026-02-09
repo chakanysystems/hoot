@@ -600,91 +600,93 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
             Page::Post => {
                 let events = app.db.get_email_thread(&app.focused_post).unwrap();
 
-                for ev in events {
-                    ui.add_space(8.0);
+                ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                    for ev in events {
+                        ui.add_space(8.0);
 
-                    Frame::none()
-                        .fill(style::CARD_BG)
-                        .stroke(Stroke::new(1.0, style::CARD_STROKE))
-                        .inner_margin(Margin::same(16.0))
-                        .rounding(8.0)
-                        .show(ui, |ui| {
-                            ui.heading(&ev.subject);
-                            ui.add_space(4.0);
+                        Frame::none()
+                            .fill(style::CARD_BG)
+                            .stroke(Stroke::new(1.0, style::CARD_STROKE))
+                            .inner_margin(Margin::same(16.0))
+                            .rounding(8.0)
+                            .show(ui, |ui| {
+                                ui.heading(&ev.subject);
+                                ui.add_space(4.0);
 
-                            // Metadata grid
-                            egui::Grid::new(format!("email_metadata-{:?}", ev.id))
-                                .num_columns(2)
-                                .spacing([8.0, 4.0])
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("From").color(style::TEXT_MUTED));
-                                    let author_pk = ev.author.unwrap().to_string();
-                                    let _ = get_profile_metadata(app, author_pk.clone());
-                                    let from_label =
-                                        app.resolve_name(&author_pk).unwrap_or_else(|| author_pk);
-                                    ui.label(RichText::new(from_label).strong());
-                                    ui.end_row();
+                                // Metadata grid
+                                egui::Grid::new(format!("email_metadata-{:?}", ev.id))
+                                    .num_columns(2)
+                                    .spacing([8.0, 4.0])
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new("From").color(style::TEXT_MUTED));
+                                        let author_pk = ev.author.unwrap().to_string();
+                                        let _ = get_profile_metadata(app, author_pk.clone());
+                                        let from_label =
+                                            app.resolve_name(&author_pk).unwrap_or_else(|| author_pk);
+                                        ui.label(RichText::new(from_label).strong());
+                                        ui.end_row();
 
-                                    ui.label(RichText::new("To").color(style::TEXT_MUTED));
-                                    let to_labels: Vec<String> = ev
-                                        .to
-                                        .iter()
-                                        .map(|pk| {
-                                            let pk_str = pk.to_string();
-                                            let _ = get_profile_metadata(app, pk_str.clone());
-                                            app.resolve_name(&pk_str).unwrap_or(pk_str)
-                                        })
-                                        .collect();
-                                    ui.label(to_labels.join(", "));
-                                    ui.end_row();
+                                        ui.label(RichText::new("To").color(style::TEXT_MUTED));
+                                        let to_labels: Vec<String> = ev
+                                            .to
+                                            .iter()
+                                            .map(|pk| {
+                                                let pk_str = pk.to_string();
+                                                let _ = get_profile_metadata(app, pk_str.clone());
+                                                app.resolve_name(&pk_str).unwrap_or(pk_str)
+                                            })
+                                            .collect();
+                                        ui.label(to_labels.join(", "));
+                                        ui.end_row();
+                                    });
+
+                                ui.add_space(8.0);
+
+                                // Action buttons
+                                ui.horizontal(|ui| {
+                                    if ui.button("📎 Attach").clicked() {
+                                        // TODO: Handle attachment
+                                    }
+                                    if ui.button("📝 Edit").clicked() {
+                                        // TODO: Handle edit
+                                    }
+                                    if ui.button("🗑️ Delete").clicked() {
+                                        // TODO: Handle delete
+                                    }
+                                    if ui.button("↩️ Reply").clicked() {
+                                        let mut parent_events: Vec<EventId> =
+                                            ev.parent_events.unwrap_or(Vec::new());
+                                        parent_events.push(ev.id.unwrap());
+                                        let state = ui::compose_window::ComposeWindowState {
+                                            subject: format!("Re: {}", ev.subject),
+                                            to_field: ev.author.unwrap().to_string(),
+                                            content: String::new(),
+                                            parent_events,
+                                            selected_account: None,
+                                            minimized: false,
+                                            draft_id: None,
+                                        };
+                                        app.state
+                                            .compose_window
+                                            .insert(egui::Id::new(rand::random::<u32>()), state);
+                                    }
+                                    if ui.button("↪️ Forward").clicked() {
+                                        // TODO: Handle forward
+                                    }
+                                    if ui.button("⭐ Star").clicked() {
+                                        // TODO: Handle star
+                                    }
                                 });
 
-                            ui.add_space(8.0);
+                                ui.add_space(12.0);
+                                ui.separator();
+                                ui.add_space(12.0);
 
-                            // Action buttons
-                            ui.horizontal(|ui| {
-                                if ui.button("📎 Attach").clicked() {
-                                    // TODO: Handle attachment
-                                }
-                                if ui.button("📝 Edit").clicked() {
-                                    // TODO: Handle edit
-                                }
-                                if ui.button("🗑️ Delete").clicked() {
-                                    // TODO: Handle delete
-                                }
-                                if ui.button("↩️ Reply").clicked() {
-                                    let mut parent_events: Vec<EventId> =
-                                        ev.parent_events.unwrap_or(Vec::new());
-                                    parent_events.push(ev.id.unwrap());
-                                    let state = ui::compose_window::ComposeWindowState {
-                                        subject: format!("Re: {}", ev.subject),
-                                        to_field: ev.author.unwrap().to_string(),
-                                        content: String::new(),
-                                        parent_events,
-                                        selected_account: None,
-                                        minimized: false,
-                                        draft_id: None,
-                                    };
-                                    app.state
-                                        .compose_window
-                                        .insert(egui::Id::new(rand::random::<u32>()), state);
-                                }
-                                if ui.button("↪️ Forward").clicked() {
-                                    // TODO: Handle forward
-                                }
-                                if ui.button("⭐ Star").clicked() {
-                                    // TODO: Handle star
-                                }
+                                // Message content
+                                ui.label(ev.content);
                             });
-
-                            ui.add_space(12.0);
-                            ui.separator();
-                            ui.add_space(12.0);
-
-                            // Message content
-                            ui.label(ev.content);
-                        });
-                }
+                    }
+                });
 
                 if let Some(event) = app
                     .events
