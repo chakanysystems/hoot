@@ -13,25 +13,56 @@ pub struct ComposeWindowState {
     pub content: String,
     pub selected_account: Option<Keys>,
     pub minimized: bool,
+    pub draft_id: Option<i64>,
+}
+
+enum DraftAction {
+    None,
+    Save {
+        subject: String,
+        to_field: String,
+        content: String,
+        parent_events: Vec<String>,
+        selected_account: Option<String>,
+        existing_id: Option<i64>,
+    },
+    Delete(i64),
 }
 
 pub struct ComposeWindow {}
 
 impl ComposeWindow {
-    pub fn show_window(app: &mut crate::Hoot, ctx: &egui::Context, id: egui::Id) {
+    /// Returns `false` when the window has been closed and should be removed.
+    pub fn show_window(app: &mut crate::Hoot, ctx: &egui::Context, id: egui::Id) -> bool {
         let screen_rect = ctx.screen_rect();
         let min_width = screen_rect.width().min(600.0);
         let min_height = screen_rect.height().min(400.0);
 
-        // First collect all window IDs and their minimized state
+        // Pre-resolve account display names before borrowing state,
+        // since resolve_name borrows app immutably and state borrows app.state mutably.
+        let account_options: Vec<(Keys, String)> = app
+            .account_manager
+            .loaded_keys
+            .iter()
+            .map(|k| {
+                let pk_hex = k.public_key().to_hex();
+                let name = app.resolve_name(&pk_hex).unwrap_or(pk_hex);
+                (k.clone(), name)
+            })
+            .collect();
+
         let state = app
             .state
             .compose_window
             .get_mut(&id)
             .expect("no state found for id");
 
+        let mut open = true;
+        let mut draft_action = DraftAction::None;
+
         egui::Window::new("New Message")
             .id(id)
+            .open(&mut open)
             .default_size([min_width, min_height])
             .min_width(300.0)
             .min_height(200.0)
@@ -146,36 +177,117 @@ impl ComposeWindow {
                                     Err(e) => error!("could not serialize event: {}", e),
                                 };
                             }
+
+                            // Delete the draft after sending
+                            if let Some(draft_id) = state.draft_id {
+                                draft_action = DraftAction::Delete(draft_id);
+                            }
+                        }
+
+                        // Save Draft button
+                        if ui
+                            .add(egui::Button::new(RichText::new("Save Draft")).rounding(6.0))
+                            .clicked()
+                        {
+                            let parent_event_strings: Vec<String> =
+                                state.parent_events.iter().map(|e| e.to_hex()).collect();
+                            let selected_account_str = state
+                                .selected_account
+                                .as_ref()
+                                .map(|k| k.public_key().to_string());
+
+                            draft_action = DraftAction::Save {
+                                subject: state.subject.clone(),
+                                to_field: state.to_field.clone(),
+                                content: state.content.clone(),
+                                parent_events: parent_event_strings,
+                                selected_account: selected_account_str,
+                                existing_id: state.draft_id,
+                            };
                         }
 
                         // Account selector
-                        let accounts = app.account_manager.loaded_keys.clone();
-                        use nostr::ToBech32;
-                        let mut formatted_key = String::new();
-                        if state.selected_account.is_some() {
-                            formatted_key = state
-                                .selected_account
-                                .clone()
-                                .unwrap()
-                                .public_key()
-                                .to_bech32()
-                                .unwrap();
-                        }
+                        let selected_text = state
+                            .selected_account
+                            .as_ref()
+                            .and_then(|k| {
+                                let pk = k.public_key().to_hex();
+                                account_options
+                                    .iter()
+                                    .find(|(key, _)| key.public_key().to_hex() == pk)
+                                    .map(|(_, name)| name.clone())
+                            })
+                            .unwrap_or_default();
 
-                        egui::ComboBox::from_id_source("account_selector")
-                            .selected_text(format!("{}", formatted_key))
-                            .show_ui(ui, |ui| {
-                                for key in accounts {
-                                    ui.selectable_value(
-                                        &mut state.selected_account,
-                                        Some(key.clone()),
-                                        key.public_key().to_bech32().unwrap(),
-                                    );
-                                }
-                            });
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_source("account_selector")
+                                .selected_text(selected_text)
+                                .show_ui(ui, |ui| {
+                                    for (key, name) in &account_options {
+                                        ui.selectable_value(
+                                            &mut state.selected_account,
+                                            Some(key.clone()),
+                                            name,
+                                        );
+                                    }
+                                });
+                            ui.label("Send as:");
+                        });
                     });
                 });
             });
+
+        // Apply deferred draft actions (outside the borrow of state)
+        match draft_action {
+            DraftAction::Save {
+                subject,
+                to_field,
+                content,
+                parent_events,
+                selected_account,
+                existing_id,
+            } => {
+                if let Some(draft_id) = existing_id {
+                    match app.db.update_draft(
+                        draft_id,
+                        &subject,
+                        &to_field,
+                        &content,
+                        &parent_events,
+                        selected_account.as_deref(),
+                    ) {
+                        Ok(_) => info!("Draft updated"),
+                        Err(e) => error!("Failed to update draft: {}", e),
+                    }
+                } else {
+                    match app.db.save_draft(
+                        &subject,
+                        &to_field,
+                        &content,
+                        &parent_events,
+                        selected_account.as_deref(),
+                    ) {
+                        Ok(new_id) => {
+                            if let Some(state) = app.state.compose_window.get_mut(&id) {
+                                state.draft_id = Some(new_id);
+                            }
+                            info!("Draft saved with id {}", new_id);
+                        }
+                        Err(e) => error!("Failed to save draft: {}", e),
+                    }
+                }
+                app.refresh_drafts();
+            }
+            DraftAction::Delete(draft_id) => {
+                if let Err(e) = app.db.delete_draft(draft_id) {
+                    error!("Failed to delete draft after send: {}", e);
+                }
+                app.refresh_drafts();
+            }
+            DraftAction::None => {}
+        }
+
+        open
     }
 
     // Keep the original show method for backward compatibility
