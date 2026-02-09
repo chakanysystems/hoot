@@ -1,6 +1,7 @@
 use crate::mail_event::MailMessage;
 use crate::relay::ClientMessage;
-use eframe::egui::{self, RichText};
+use crate::style;
+use eframe::egui::{self, Color32, RichText};
 use nostr::{EventId, Keys, PublicKey};
 use tracing::{debug, error, info};
 
@@ -42,20 +43,26 @@ impl ComposeWindow {
                 ui.vertical(|ui| {
                     // Header section
                     ui.horizontal(|ui| {
-                        ui.label("To:");
+                        ui.label(RichText::new("To:").color(style::TEXT_MUTED));
                         ui.add_sized(
                             [ui.available_width(), 24.0],
-                            egui::TextEdit::singleline(&mut state.to_field),
+                            egui::TextEdit::singleline(&mut state.to_field)
+                                .hint_text("Recipient public key"),
                         );
                     });
 
+                    ui.add_space(2.0);
+
                     ui.horizontal(|ui| {
-                        ui.label("Subject:");
+                        ui.label(RichText::new("Subject:").color(style::TEXT_MUTED));
                         ui.add_sized(
                             [ui.available_width(), 24.0],
-                            egui::TextEdit::singleline(&mut state.subject),
+                            egui::TextEdit::singleline(&mut state.subject)
+                                .hint_text("Message subject"),
                         );
                     });
+
+                    ui.add_space(2.0);
 
                     // Toolbar
                     ui.horizontal(|ui| {
@@ -84,7 +91,14 @@ impl ComposeWindow {
 
                     // Bottom bar with account selector and send button
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Send").clicked() {
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("Send").color(Color32::WHITE))
+                                    .fill(style::ACCENT)
+                                    .rounding(6.0),
+                            )
+                            .clicked()
+                        {
                             if state.selected_account.is_none() {
                                 error!("No Account Selected!");
                                 return;

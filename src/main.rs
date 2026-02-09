@@ -3,7 +3,7 @@
 use anyhow::bail;
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontDefinitions, FontId, Frame, Margin, RichText,
-    ScrollArea, Sense, TextureHandle, TextureOptions, Vec2, Vec2b,
+    ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Vec2, Vec2b,
 };
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
@@ -21,9 +21,8 @@ mod mail_event;
 mod profile_metadata;
 use profile_metadata::{get_profile_metadata, ProfileMetadata, ProfileOption};
 mod relay;
+mod style;
 mod ui;
-// not sure if i will use this but i'm committing it for later.
-// mod threaded_event;
 
 // WE PROBABLY SHOULDN'T MAKE EVERYTHING A STRING, GRR!
 #[derive(Clone, Debug)]
@@ -35,7 +34,7 @@ pub struct TableEntry {
     pub created_at: i64,
 }
 
-const CONTACT_AVATAR_SIZE: f32 = 48.0;
+const CONTACT_AVATAR_SIZE: f32 = style::AVATAR_SIZE;
 
 #[derive(Clone)]
 struct Contact {
@@ -111,7 +110,7 @@ fn main() -> Result<(), eframe::Error> {
         "Hoot",
         options,
         Box::new(|cc| {
-            let _ = &cc.egui_ctx.set_visuals(egui::Visuals::light());
+            style::apply_theme(&cc.egui_ctx);
             let mut fonts = FontDefinitions::default();
             fonts.font_data.insert(
                 "Inter".to_owned(),
@@ -122,16 +121,13 @@ fn main() -> Result<(), eframe::Error> {
                 .get_mut(&Proportional)
                 .unwrap()
                 .insert(0, "Inter".to_owned());
-            let _ = &cc.egui_ctx.set_fonts(fonts);
-            let _ = &cc
-                .egui_ctx
-                .style_mut(|style| style.visuals.dark_mode = false);
+            cc.egui_ctx.set_fonts(fonts);
             Box::new(Hoot::new(cc))
         }),
     )
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Page {
     Inbox,
     Drafts,
@@ -400,21 +396,65 @@ fn get_key_display_text(app: &Hoot, key: &nostr::Keys) -> String {
     }
 }
 
+fn render_nav_item(ui: &mut egui::Ui, label: &str, is_selected: bool) -> egui::Response {
+    let desired_size = egui::vec2(ui.available_width(), 30.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
+
+    if is_selected {
+        ui.painter()
+            .rect_filled(rect, egui::Rounding::same(6.0), style::ACCENT_LIGHT);
+    } else if response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::Rounding::same(6.0),
+            Color32::from_rgba_premultiplied(149, 117, 205, 20),
+        );
+    }
+
+    ui.painter().text(
+        rect.left_center() + egui::vec2(10.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.0),
+        if is_selected {
+            style::ACCENT
+        } else {
+            ui.visuals().text_color()
+        },
+    );
+
+    response
+}
+
 fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
     egui::SidePanel::left("left_panel")
-        .default_width(200.0)
+        .default_width(style::SIDEBAR_WIDTH)
+        .frame(
+            Frame::none()
+                .fill(style::SIDEBAR_BG)
+                .inner_margin(Margin::symmetric(16.0, 12.0)),
+        )
         .show(ctx, |ui| {
             ui.vertical(|ui| {
                 ui.add_space(8.0);
-                // App title
-                ui.heading("Hoot");
+                ui.label(
+                    RichText::new("Hoot")
+                        .size(22.0)
+                        .strong()
+                        .color(style::ACCENT),
+                );
                 ui.add_space(16.0);
 
-                // Compose button
+                // Compose button — full width, accent fill, white text
+                let compose_width = ui.available_width();
                 if ui
                     .add_sized(
-                        [180.0, 36.0],
-                        egui::Button::new("✉ Compose").fill(egui::Color32::from_rgb(149, 117, 205)),
+                        [compose_width, 38.0],
+                        egui::Button::new(
+                            RichText::new("✉ Compose").color(Color32::WHITE).size(14.0),
+                        )
+                        .fill(style::ACCENT)
+                        .rounding(8.0),
                     )
                     .clicked()
                 {
@@ -434,34 +474,38 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                 ui.add_space(16.0);
 
                 // Navigation items
-                let nav_items = [
+                let nav_items: Vec<(&str, Page, usize)> = vec![
                     ("📥 Inbox", Page::Inbox, app.events.len()),
                     ("🔄 Requests", Page::Post, 20),
                     ("📝 Drafts", Page::Drafts, 3),
                     ("⭐ Starred", Page::Post, 0),
                     ("📁 Archived", Page::Post, 0),
                     ("🗑️ Trash", Page::Post, 0),
-                    ("Contacts", Page::Contacts, 0),
                 ];
 
-                for (label, page, count) in nav_items {
-                    let is_selected = app.page == page;
-                    let response = ui.selectable_label(
-                        is_selected,
-                        format!(
-                            "{} {}",
-                            label,
-                            if count > 0 {
-                                count.to_string()
-                            } else {
-                                String::new()
-                            }
-                        ),
-                    );
-                    if response.clicked() {
-                        app.page = page;
+                for (label, page, count) in &nav_items {
+                    let text = if *count > 0 {
+                        format!("{} {}", label, count)
+                    } else {
+                        label.to_string()
+                    };
+                    let is_selected = app.page == *page;
+                    if render_nav_item(ui, &text, is_selected).clicked() {
+                        app.page = page.clone();
                     }
                 }
+
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // Contacts
+                if render_nav_item(ui, "👤 Contacts", app.page == Page::Contacts).clicked() {
+                    app.page = Page::Contacts;
+                }
+
+                ui.add_space(8.0);
+
                 // Show onboarding for first-time users, or Add Account button for existing users
                 if app.account_manager.loaded_keys.is_empty() {
                     if ui.button("onboarding").clicked() {
@@ -476,16 +520,19 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                     }
                 }
 
-                // Add flexible space to push profile to bottom
+                // Push account selector + settings to bottom
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                     ui.add_space(8.0);
 
-                    // Account selector
                     if !app.account_manager.loaded_keys.is_empty() {
-                        ui.label(RichText::new("Account:").size(10.0));
+                        ui.label(
+                            RichText::new("Account:")
+                                .size(10.0)
+                                .color(style::TEXT_MUTED),
+                        );
                         egui::ComboBox::from_id_source("sidebar_account_selector")
                             .selected_text(get_account_display_text(app))
-                            .width(180.0)
+                            .width(ui.available_width() - 8.0)
                             .show_ui(ui, |ui| {
                                 for key in &app.account_manager.loaded_keys.clone() {
                                     let display_text = get_key_display_text(app, key);
@@ -501,7 +548,6 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
 
                     ui.add_space(4.0);
 
-                    // Settings button
                     if ui.add_sized([32.0, 32.0], egui::Button::new("⚙")).clicked() {
                         app.page = Page::Settings;
                     }
@@ -539,6 +585,8 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
     egui::CentralPanel::default().show(ctx, |ui| {
         match app.page {
             Page::Inbox => {
+                ui.add_space(8.0);
+
                 // Top bar with search
                 ui.horizontal(|ui| {
                     if ui.button("Refresh").clicked() {
@@ -559,73 +607,83 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     );
                 });
 
-                ui.add_space(8.0);
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
 
-                if app.table_entries.len() == 0 {
-                    ui.label("I couldn't find any messages for you :(");
-                }
-
-                // Email list using TableBuilder
-                TableBuilder::new(ui)
-                    .column(Column::auto()) // Checkbox
-                    .column(Column::auto()) // Star
-                    .column(Column::remainder()) // Sender
-                    .column(Column::remainder()) // Content
-                    .column(Column::remainder()) // Time
-                    .striped(true)
-                    .sense(Sense::click())
-                    .auto_shrink(Vec2b { x: false, y: false })
-                    .header(20.0, |mut header| {
-                        header.col(|ui| {
-                            ui.checkbox(&mut false, "");
-                        });
-                        header.col(|ui| {
-                            ui.label("⭐");
-                        });
-                        header.col(|ui| {
-                            ui.label("From");
-                        });
-                        header.col(|ui| {
-                            ui.label("Subject");
-                        });
-                        header.col(|ui| {
-                            ui.label("Time");
-                        });
-                    })
-                    .body(|body| {
-                        let row_height = 30.0;
-                        let events: Vec<TableEntry> = app.table_entries.to_vec();
-                        body.rows(row_height, events.len(), |mut row| {
-                            let event = &events[row.index()];
-
-                            row.col(|ui| {
-                                ui.checkbox(&mut false, "");
-                            });
-                            row.col(|ui| {
-                                ui.checkbox(&mut false, "");
-                            });
-                            row.col(|ui| {
-                                // Kick off a metadata fetch if needed
-                                let _ = get_profile_metadata(app, event.pubkey.clone());
-                                let label = app
-                                    .resolve_name(&event.pubkey)
-                                    .unwrap_or_else(|| event.pubkey.to_string());
-                                ui.label(label);
-                            });
-                            row.col(|ui| {
-                                // Try to get subject from tags
-                                ui.label(&event.subject);
-                            });
-                            row.col(|ui| {
-                                ui.label(event.created_at.to_string());
-                            });
-
-                            if row.response().clicked() {
-                                app.focused_post = event.id.clone();
-                                app.page = Page::Post;
-                            }
-                        });
+                if app.table_entries.is_empty() {
+                    ui.add_space(40.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("No messages yet")
+                                .size(16.0)
+                                .color(style::TEXT_MUTED),
+                        );
                     });
+                } else {
+                    // Email list using TableBuilder
+                    TableBuilder::new(ui)
+                        .column(Column::auto()) // Checkbox
+                        .column(Column::auto()) // Star
+                        .column(Column::initial(160.0).at_least(100.0)) // Sender
+                        .column(Column::remainder()) // Subject
+                        .column(Column::initial(100.0).at_least(70.0)) // Time
+                        .striped(true)
+                        .sense(Sense::click())
+                        .auto_shrink(Vec2b { x: false, y: false })
+                        .header(28.0, |mut header| {
+                            header.col(|ui| {
+                                ui.checkbox(&mut false, "");
+                            });
+                            header.col(|ui| {
+                                ui.label(RichText::new("⭐").size(12.0));
+                            });
+                            header.col(|ui| {
+                                ui.label(RichText::new("From").small().color(style::TEXT_MUTED));
+                            });
+                            header.col(|ui| {
+                                ui.label(RichText::new("Subject").small().color(style::TEXT_MUTED));
+                            });
+                            header.col(|ui| {
+                                ui.label(RichText::new("Date").small().color(style::TEXT_MUTED));
+                            });
+                        })
+                        .body(|body| {
+                            let events: Vec<TableEntry> = app.table_entries.to_vec();
+                            body.rows(style::INBOX_ROW_HEIGHT, events.len(), |mut row| {
+                                let event = &events[row.index()];
+
+                                row.col(|ui| {
+                                    ui.checkbox(&mut false, "");
+                                });
+                                row.col(|ui| {
+                                    ui.checkbox(&mut false, "");
+                                });
+                                row.col(|ui| {
+                                    let _ = get_profile_metadata(app, event.pubkey.clone());
+                                    let label = app
+                                        .resolve_name(&event.pubkey)
+                                        .unwrap_or_else(|| event.pubkey.to_string());
+                                    ui.label(RichText::new(label).strong());
+                                });
+                                row.col(|ui| {
+                                    ui.label(&event.subject);
+                                });
+                                row.col(|ui| {
+                                    ui.label(
+                                        RichText::new(style::format_timestamp(event.created_at))
+                                            .color(style::TEXT_MUTED)
+                                            .small(),
+                                    );
+                                });
+
+                                if row.response().clicked() {
+                                    app.focused_post = event.id.clone();
+                                    app.page = Page::Post;
+                                }
+                            });
+                        });
+                } // else (has table entries)
             }
             Page::Contacts => {
                 render_contacts_page(app, ui);
@@ -638,78 +696,87 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
 
                 for ev in events {
                     ui.add_space(8.0);
-                    ui.heading(&ev.subject);
 
-                    // Metadata grid
-                    egui::Grid::new(format!("email_metadata-{:?}", ev.id))
-                        .num_columns(2)
-                        .spacing([8.0, 4.0])
+                    Frame::none()
+                        .fill(style::CARD_BG)
+                        .stroke(Stroke::new(1.0, style::CARD_STROKE))
+                        .inner_margin(Margin::same(16.0))
+                        .rounding(8.0)
                         .show(ui, |ui| {
-                            ui.label("From");
-                            let author_pk = ev.author.unwrap().to_string();
-                            let _ = get_profile_metadata(app, author_pk.clone());
-                            let from_label =
-                                app.resolve_name(&author_pk).unwrap_or_else(|| author_pk);
-                            ui.label(from_label);
-                            ui.end_row();
+                            ui.heading(&ev.subject);
+                            ui.add_space(4.0);
 
-                            ui.label("To");
-                            let to_labels: Vec<String> = ev
-                                .to
-                                .iter()
-                                .map(|pk| {
-                                    let pk_str = pk.to_string();
-                                    let _ = get_profile_metadata(app, pk_str.clone());
-                                    app.resolve_name(&pk_str).unwrap_or(pk_str)
-                                })
-                                .collect();
-                            ui.label(to_labels.join(", "));
-                            ui.end_row();
+                            // Metadata grid
+                            egui::Grid::new(format!("email_metadata-{:?}", ev.id))
+                                .num_columns(2)
+                                .spacing([8.0, 4.0])
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new("From").color(style::TEXT_MUTED));
+                                    let author_pk = ev.author.unwrap().to_string();
+                                    let _ = get_profile_metadata(app, author_pk.clone());
+                                    let from_label =
+                                        app.resolve_name(&author_pk).unwrap_or_else(|| author_pk);
+                                    ui.label(RichText::new(from_label).strong());
+                                    ui.end_row();
+
+                                    ui.label(RichText::new("To").color(style::TEXT_MUTED));
+                                    let to_labels: Vec<String> = ev
+                                        .to
+                                        .iter()
+                                        .map(|pk| {
+                                            let pk_str = pk.to_string();
+                                            let _ = get_profile_metadata(app, pk_str.clone());
+                                            app.resolve_name(&pk_str).unwrap_or(pk_str)
+                                        })
+                                        .collect();
+                                    ui.label(to_labels.join(", "));
+                                    ui.end_row();
+                                });
+
+                            ui.add_space(8.0);
+
+                            // Action buttons
+                            ui.horizontal(|ui| {
+                                if ui.button("📎 Attach").clicked() {
+                                    // TODO: Handle attachment
+                                }
+                                if ui.button("📝 Edit").clicked() {
+                                    // TODO: Handle edit
+                                }
+                                if ui.button("🗑️ Delete").clicked() {
+                                    // TODO: Handle delete
+                                }
+                                if ui.button("↩️ Reply").clicked() {
+                                    let mut parent_events: Vec<EventId> =
+                                        ev.parent_events.unwrap_or(Vec::new());
+                                    parent_events.push(ev.id.unwrap());
+                                    let state = ui::compose_window::ComposeWindowState {
+                                        subject: format!("Re: {}", ev.subject),
+                                        to_field: ev.author.unwrap().to_string(),
+                                        content: String::new(),
+                                        parent_events,
+                                        selected_account: None,
+                                        minimized: false,
+                                    };
+                                    app.state
+                                        .compose_window
+                                        .insert(egui::Id::new(rand::random::<u32>()), state);
+                                }
+                                if ui.button("↪️ Forward").clicked() {
+                                    // TODO: Handle forward
+                                }
+                                if ui.button("⭐ Star").clicked() {
+                                    // TODO: Handle star
+                                }
+                            });
+
+                            ui.add_space(12.0);
+                            ui.separator();
+                            ui.add_space(12.0);
+
+                            // Message content
+                            ui.label(ev.content);
                         });
-
-                    ui.add_space(8.0);
-
-                    // Action buttons
-                    ui.horizontal(|ui| {
-                        if ui.button("📎 Attach").clicked() {
-                            // TODO: Handle attachment
-                        }
-                        if ui.button("📝 Edit").clicked() {
-                            // TODO: Handle edit
-                        }
-                        if ui.button("🗑️ Delete").clicked() {
-                            // TODO: Handle delete
-                        }
-                        if ui.button("↩️ Reply").clicked() {
-                            let mut parent_events: Vec<EventId> =
-                                ev.parent_events.unwrap_or(Vec::new());
-                            parent_events.push(ev.id.unwrap());
-                            let state = ui::compose_window::ComposeWindowState {
-                                subject: format!("Re: {}", ev.subject),
-                                to_field: ev.author.unwrap().to_string(),
-                                content: String::new(),
-                                parent_events,
-                                selected_account: None,
-                                minimized: false,
-                            };
-                            app.state
-                                .compose_window
-                                .insert(egui::Id::new(rand::random::<u32>()), state);
-                        }
-                        if ui.button("↪️ Forward").clicked() {
-                            // TODO: Handle forward
-                        }
-                        if ui.button("⭐ Star").clicked() {
-                            // TODO: Handle star
-                        }
-                    });
-
-                    ui.add_space(16.0);
-                    ui.separator();
-                    ui.add_space(16.0);
-
-                    // Message content
-                    ui.label(ev.content);
                 }
 
                 if let Some(event) = app
@@ -977,8 +1044,11 @@ fn render_contacts_page(app: &mut Hoot, ui: &mut egui::Ui) {
 
     // Add contact form
     if app.state.contacts.show_add_form {
-        Frame::group(ui.style())
-            .inner_margin(Margin::symmetric(12.0, 8.0))
+        Frame::none()
+            .fill(style::CARD_BG)
+            .stroke(Stroke::new(1.0, style::CARD_STROKE))
+            .inner_margin(Margin::symmetric(16.0, 12.0))
+            .rounding(8.0)
             .show(ui, |ui| {
                 ui.label(RichText::new("Add New Contact").strong());
                 ui.add_space(4.0);
@@ -1086,8 +1156,10 @@ fn render_contacts_page(app: &mut Hoot, ui: &mut egui::Ui) {
                 let is_editing =
                     app.state.contacts.editing_pubkey.as_ref() == Some(&contact.pubkey);
 
-                Frame::group(ui.style())
-                    .inner_margin(Margin::symmetric(12.0, 8.0))
+                Frame::none()
+                    .fill(style::CARD_BG)
+                    .stroke(Stroke::new(1.0, style::CARD_STROKE))
+                    .inner_margin(Margin::symmetric(16.0, 12.0))
                     .rounding(8.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -1138,7 +1210,7 @@ fn render_contacts_page(app: &mut Hoot, ui: &mut egui::Ui) {
                                                 ui.label(
                                                     RichText::new(format!("({})", nostr_name))
                                                         .small()
-                                                        .color(Color32::GRAY),
+                                                        .color(style::TEXT_MUTED),
                                                 );
                                             }
                                         }
@@ -1152,7 +1224,7 @@ fn render_contacts_page(app: &mut Hoot, ui: &mut egui::Ui) {
                                         RichText::new(&contact.pubkey)
                                             .monospace()
                                             .small()
-                                            .color(Color32::GRAY),
+                                            .color(style::TEXT_MUTED),
                                     );
                                 }
                             });
@@ -1206,11 +1278,7 @@ fn draw_contact_avatar(app: &Hoot, ui: &mut egui::Ui, contact: &Contact) {
 
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.circle_filled(
-        rect.center(),
-        CONTACT_AVATAR_SIZE / 2.0,
-        Color32::from_rgb(149, 117, 205),
-    );
+    painter.circle_filled(rect.center(), CONTACT_AVATAR_SIZE / 2.0, style::ACCENT);
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
