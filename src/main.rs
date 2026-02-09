@@ -2,27 +2,27 @@
 
 use anyhow::bail;
 use eframe::egui::{
-    self, Align2, Color32, ColorImage, FontDefinitions, FontId, Frame, Margin, RichText,
-    ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Vec2, Vec2b,
+    self, Color32, FontDefinitions, FontId, Frame, Margin, RichText,
+    ScrollArea, Sense, Stroke, Vec2, Vec2b,
 };
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
-use nostr::{event::Kind, EventId, SingleLetterTag, TagKind};
-use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::{Receiver, Sender};
-use std::time::Duration;
+use nostr::{event::Kind, EventId, TagKind};
+use std::collections::HashMap;
 use std::{panic, thread};
 use tracing::{debug, error, info, warn, Level};
 
 mod account_manager;
 mod db;
 mod error;
+mod image_loader;
 mod mail_event;
 mod profile_metadata;
 use profile_metadata::{get_profile_metadata, ProfileMetadata, ProfileOption};
 mod relay;
 mod style;
 mod ui;
+use ui::contacts::ContactsManager;
 
 // WE PROBABLY SHOULDN'T MAKE EVERYTHING A STRING, GRR!
 #[derive(Clone, Debug)]
@@ -34,62 +34,7 @@ pub struct TableEntry {
     pub created_at: i64,
 }
 
-const CONTACT_AVATAR_SIZE: f32 = style::AVATAR_SIZE;
 
-#[derive(Clone)]
-struct Contact {
-    pub pubkey: String,
-    pub petname: Option<String>,
-    pub metadata: ProfileMetadata,
-}
-
-impl Contact {
-    fn display_name(&self) -> String {
-        self.petname
-            .clone()
-            .or(self.metadata.display_name.clone())
-            .or(self.metadata.name.clone())
-            .unwrap_or_else(|| self.pubkey.clone())
-    }
-
-    fn initials(&self) -> String {
-        let fallback = self
-            .petname
-            .as_deref()
-            .or(self.metadata.display_name.as_deref())
-            .or(self.metadata.name.as_deref())
-            .unwrap_or(&self.pubkey);
-
-        let mut initials = fallback
-            .split_whitespace()
-            .filter_map(|segment| segment.chars().next())
-            .map(|ch| ch.to_ascii_uppercase())
-            .take(2)
-            .collect::<String>();
-
-        if initials.is_empty() {
-            initials = fallback
-                .chars()
-                .take(2)
-                .map(|ch| ch.to_ascii_uppercase())
-                .collect();
-        }
-
-        initials
-    }
-
-    fn picture_url(&self) -> Option<&str> {
-        self.metadata
-            .picture
-            .as_deref()
-            .filter(|url| !url.is_empty())
-    }
-}
-
-struct ContactImageMessage {
-    pub pubkey: String,
-    pub image: Option<ColorImage>,
-}
 
 fn main() -> Result<(), eframe::Error> {
     let (non_blocking, _guard) = tracing_appender::non_blocking(std::io::stdout()); // add log files in prod one day
@@ -175,12 +120,7 @@ pub struct Hoot {
     db: db::Db,
     table_entries: Vec<TableEntry>,
     profile_metadata: HashMap<String, profile_metadata::ProfileOption>,
-    contacts: Vec<Contact>,
-    contact_images: HashMap<String, TextureHandle>,
-    pending_contact_images: HashSet<String>,
-    failed_contact_images: HashSet<String>,
-    image_request_sender: Sender<ContactImageMessage>,
-    image_request_receiver: Receiver<ContactImageMessage>,
+    pub contacts_manager: ContactsManager,
     drafts: Vec<db::Draft>,
 }
 
@@ -188,8 +128,18 @@ pub struct Hoot {
 enum HootStatus {
     PreUnlock,
     WaitingForUnlock,
-    Initalizing,
+    Initializing,
     Ready,
+}
+
+fn try_recv_relay_message(app: &mut Hoot) {
+    if let Some(raw) = app.relays.try_recv() {
+        info!("{:?}", &raw);
+        match relay::RelayMessage::from_json(&raw) {
+            Ok(v) => process_message(app, &v),
+            Err(e) => error!("could not decode message sent from relay: {}", e),
+        }
+    }
 }
 
 fn update_app(app: &mut Hoot, ctx: &egui::Context) {
@@ -216,25 +166,16 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
         return;
     } else if app.status == HootStatus::WaitingForUnlock {
         // the unlock happens in the render_app function
-        // we can't do anything but wait until HootStatus is Initalizing
+        // we can't do anything but wait until HootStatus is Initializing
         app.relays.keepalive(wake_up);
-        let new_val = app.relays.try_recv();
-        if new_val.is_some() {
-            info!("{:?}", new_val.clone());
-
-            match relay::RelayMessage::from_json(&new_val.unwrap()) {
-                Ok(v) => process_message(app, &v),
-                Err(e) => error!("could not decode message sent from relay: {}", e),
-            };
-        }
+        try_recv_relay_message(app);
         return;
     }
 
-    if app.status == HootStatus::Initalizing {
-        info!("Initalizing Hoot...");
-        match app.account_manager.load_keys(&app.db) {
-            Ok(..) => {}
-            Err(v) => error!("something went wrong trying to load keys: {}", v),
+    if app.status == HootStatus::Initializing {
+        info!("Initializing Hoot...");
+        if let Err(e) = app.account_manager.load_keys(&app.db) {
+            error!("something went wrong trying to load keys: {}", e);
         }
 
         match app.db.get_top_level_messages() {
@@ -242,49 +183,11 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
             Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
         }
 
-        if app.account_manager.loaded_keys.len() > 0 {
-            let mut gw_sub = relay::Subscription::default();
+        if !app.account_manager.loaded_keys.is_empty() {
+            app.update_gift_wrap_subscription();
 
-            let filter = nostr::Filter::new().kind(nostr::Kind::GiftWrap).custom_tag(
-                SingleLetterTag {
-                    character: nostr::Alphabet::P,
-                    uppercase: false,
-                },
-                app.account_manager
-                    .loaded_keys
-                    .clone()
-                    .into_iter()
-                    .map(|keys| keys.public_key()),
-            );
-            gw_sub.filter(filter);
-
-            // TODO: fix error handling
-            let _ = app.relays.add_subscription(gw_sub);
-
-            let contacts_data = match app.db.get_user_contacts() {
-                Ok(entries) => entries,
-                Err(err) => {
-                    error!("Failed to load contacts from database: {}", err);
-                    Vec::new()
-                }
-            };
-
-            app.contacts = contacts_data
-                .into_iter()
-                .map(|(pubkey, petname, metadata)| Contact {
-                    pubkey,
-                    petname,
-                    metadata,
-                })
-                .collect();
-            app.contacts
-                .sort_by(|a, b| Hoot::contact_sort_key(a).cmp(&Hoot::contact_sort_key(b)));
-
-            for contact in &app.contacts {
-                app.profile_metadata.insert(
-                    contact.pubkey.clone(),
-                    ProfileOption::Some(contact.metadata.clone()),
-                );
+            if let Err(e) = app.contacts_manager.load_from_db(&app.db, &mut app.profile_metadata) {
+                error!("Failed to load contacts: {}", e);
             }
         }
 
@@ -295,18 +198,8 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
     }
 
     app.relays.keepalive(wake_up);
-
-    let new_val = app.relays.try_recv();
-    if new_val.is_some() {
-        info!("{:?}", new_val.clone());
-
-        match relay::RelayMessage::from_json(&new_val.unwrap()) {
-            Ok(v) => process_message(app, &v),
-            Err(e) => error!("could not decode message sent from relay: {}", e),
-        };
-    }
-
-    app.process_contact_image_queue(&ctx);
+    try_recv_relay_message(app);
+    app.contacts_manager.process_image_queue(&ctx);
 }
 
 fn process_message(app: &mut Hoot, msg: &relay::RelayMessage) {
@@ -324,52 +217,49 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
 
-    // Parse the event using the RelayMessage type which handles the ["EVENT", subscription_id, event_json] format
-    if let Ok(event) = serde_json::from_str::<nostr::Event>(event_json) {
-        // Verify the event signature
-        if event.verify().is_ok() {
-            debug!("Verified event: {:?}", event);
-
-            // Check if we already have this event
-            if let Ok(has_event) = app.db.has_event(&event.id.to_string()) {
-                if has_event {
-                    debug!("Skipping already stored event: {}", event.id);
-                    return;
-                }
-            }
-
-            if event.kind == Kind::Metadata {
-                debug!("Got profile metadata");
-
-                let deserialized_metadata: profile_metadata::ProfileMetadata =
-                    serde_json::from_str(&event.content).unwrap();
-                app.profile_metadata.insert(
-                    event.pubkey.to_string(),
-                    ProfileOption::Some(deserialized_metadata.clone()),
-                );
-                app.upsert_contact(event.pubkey.to_string(), deserialized_metadata.clone());
-                // TODO: evaluate perf cost of clone LOL
-                match app.db.update_profile_metadata(event.clone()) {
-                    Ok(_) => { // wow who cares
-                    }
-                    Err(e) => error!("Error when saving profile metadata to DB: {}", e),
-                }
-            }
-
-            // Store the event in memory
-            app.events.push(event.clone());
-
-            // Store the event in the database
-            if let Err(e) = app.db.store_event(&event, &mut app.account_manager) {
-                error!("Failed to store event in database: {}", e);
-            } else {
-                debug!("Successfully stored event with id {} in database", event.id);
-            }
-        } else {
-            error!("Event verification failed for event: {}", event.id);
+    let event = match serde_json::from_str::<nostr::Event>(event_json) {
+        Ok(event) => event,
+        Err(_) => {
+            error!("Failed to parse event JSON: {}", event_json);
+            return;
         }
+    };
+
+    if event.verify().is_err() {
+        error!("Event verification failed for event: {}", event.id);
+        return;
+    }
+    debug!("Verified event: {:?}", event);
+
+    if let Ok(true) = app.db.has_event(&event.id.to_string()) {
+        debug!("Skipping already stored event: {}", event.id);
+        return;
+    }
+
+    if event.kind == Kind::Metadata {
+        debug!("Got profile metadata");
+
+        let deserialized_metadata: profile_metadata::ProfileMetadata =
+            serde_json::from_str(&event.content).unwrap();
+        app.profile_metadata.insert(
+            event.pubkey.to_string(),
+            ProfileOption::Some(deserialized_metadata.clone()),
+        );
+        app.contacts_manager.upsert_metadata(event.pubkey.to_string(), deserialized_metadata.clone());
+        // TODO: evaluate perf cost of clone LOL
+        match app.db.update_profile_metadata(event.clone()) {
+            Ok(_) => { // wow who cares
+            }
+            Err(e) => error!("Error when saving profile metadata to DB: {}", e),
+        }
+    }
+
+    app.events.push(event.clone());
+
+    if let Err(e) = app.db.store_event(&event, &mut app.account_manager) {
+        error!("Failed to store event in database: {}", e);
     } else {
-        error!("Failed to parse event JSON: {}", event_json);
+        debug!("Successfully stored event with id {} in database", event.id);
     }
 }
 
@@ -561,25 +451,31 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
 }
 
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
-    // Render add account windows
-    let mut account_windows_to_remove = Vec::new();
-    for window_id in app.state.add_account_window.clone().into_keys() {
-        if !ui::add_account_window::AddAccountWindow::show_window(app, ctx, window_id) {
-            account_windows_to_remove.push(window_id);
-        }
-    }
-    for id in account_windows_to_remove {
+    // Render add account windows, collecting closed ones for removal
+    let closed_account_windows: Vec<egui::Id> = app
+        .state
+        .add_account_window
+        .keys()
+        .copied()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .filter(|&id| !ui::add_account_window::AddAccountWindow::show_window(app, ctx, id))
+        .collect();
+    for id in closed_account_windows {
         app.state.add_account_window.remove(&id);
     }
 
-    // Render compose windows if any are open - moved outside CentralPanel
-    let mut compose_windows_to_remove = Vec::new();
-    for window_id in app.state.compose_window.clone().into_keys() {
-        if !ui::compose_window::ComposeWindow::show_window(app, ctx, window_id) {
-            compose_windows_to_remove.push(window_id);
-        }
-    }
-    for id in compose_windows_to_remove {
+    // Render compose windows, collecting closed ones for removal
+    let closed_compose_windows: Vec<egui::Id> = app
+        .state
+        .compose_window
+        .keys()
+        .copied()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .filter(|&id| !ui::compose_window::ComposeWindow::show_window(app, ctx, id))
+        .collect();
+    for id in closed_compose_windows {
         app.state.compose_window.remove(&id);
     }
 
@@ -696,7 +592,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 } // else (has table entries)
             }
             Page::Contacts => {
-                render_contacts_page(app, ui);
+                ui::contacts::render_contacts_page(app, ui);
             }
             Page::Settings => {
                 ui::settings::SettingsScreen::ui(app, ui);
@@ -982,25 +878,16 @@ impl Hoot {
             }
         };
 
-        let (image_request_sender, image_request_receiver) = std::sync::mpsc::channel();
-
         // check if this is our first time loading
         let page = match std::fs::exists(storage_dir.join("done")) {
-            Ok(v) => {
-                if v {
-                    Page::Unlock
-                } else {
-                    Page::Onboarding
-                }
-            }
-            Err(e) => {
-                panic!("Couldn't check if we have already setup: {}", e);
-            }
+            Ok(true) => Page::Unlock,
+            Ok(false) => Page::Onboarding,
+            Err(e) => panic!("Couldn't check if we have already setup: {}", e),
         };
 
         Self {
-            page: page,
-            focused_post: "".into(),
+            page,
+            focused_post: String::new(),
             status: HootStatus::PreUnlock,
             state: Default::default(),
             relays: relay::RelayPool::new(),
@@ -1010,12 +897,7 @@ impl Hoot {
             db,
             table_entries: Vec::new(),
             profile_metadata: HashMap::new(),
-            contacts: Vec::new(),
-            contact_images: HashMap::new(),
-            pending_contact_images: HashSet::new(),
-            failed_contact_images: HashSet::new(),
-            image_request_sender,
-            image_request_receiver,
+            contacts_manager: ContactsManager::new(),
             drafts: Vec::new(),
         }
     }
@@ -1027,13 +909,41 @@ impl Hoot {
         }
     }
 
+    /// Update the gift-wrap subscription to include all loaded accounts.
+    pub fn update_gift_wrap_subscription(&mut self) {
+        if self.account_manager.loaded_keys.is_empty() {
+            return;
+        }
+
+        let public_keys: Vec<nostr::PublicKey> = self
+            .account_manager
+            .loaded_keys
+            .iter()
+            .map(|k| k.public_key())
+            .collect();
+
+        let filter = nostr::Filter::new().kind(nostr::Kind::GiftWrap).custom_tag(
+            nostr::SingleLetterTag {
+                character: nostr::Alphabet::P,
+                uppercase: false,
+            },
+            public_keys,
+        );
+
+        let mut gw_sub = relay::Subscription::default();
+        gw_sub.filter(filter);
+
+        match self.relays.add_subscription(gw_sub) {
+            Ok(_) => debug!("Updated gift-wrap subscription"),
+            Err(e) => error!("Failed to update gift-wrap subscription: {}", e),
+        }
+    }
+
     /// Resolve the best display name for a pubkey: petname > display_name > name > pubkey.
     fn resolve_name(&self, pubkey: &str) -> Option<String> {
         // Check contacts for petname first
-        if let Some(contact) = self.contacts.iter().find(|c| c.pubkey == pubkey) {
-            if contact.petname.is_some() {
-                return contact.petname.clone();
-            }
+        if let Some(petname) = self.contacts_manager.find_petname(pubkey) {
+            return Some(petname.to_string());
         }
         // Fall back to profile metadata
         if let Some(ProfileOption::Some(meta)) = self.profile_metadata.get(pubkey) {
@@ -1047,458 +957,8 @@ impl Hoot {
         None
     }
 
-    fn contact_sort_key(contact: &Contact) -> String {
-        contact
-            .petname
-            .clone()
-            .or(contact.metadata.display_name.clone())
-            .or(contact.metadata.name.clone())
-            .unwrap_or_else(|| contact.pubkey.clone())
-            .to_lowercase()
-    }
-
-    fn ensure_contact_image_request(&mut self, contact: &Contact) {
-        let Some(url) = contact.picture_url() else {
-            return;
-        };
-
-        if self.contact_images.contains_key(&contact.pubkey)
-            || self.pending_contact_images.contains(&contact.pubkey)
-            || self.failed_contact_images.contains(&contact.pubkey)
-        {
-            return;
-        }
-
-        let sender = self.image_request_sender.clone();
-        let pubkey = contact.pubkey.clone();
-        let url = url.to_string();
-
-        self.pending_contact_images.insert(pubkey.clone());
-
-        thread::spawn(move || {
-            let image = fetch_profile_image(&url);
-            if sender.send(ContactImageMessage { pubkey, image }).is_err() {
-                debug!("Contact image receiver dropped before image arrived");
-            }
-        });
-    }
-
-    fn process_contact_image_queue(&mut self, ctx: &egui::Context) {
-        let mut updated = false;
-
-        while let Ok(message) = self.image_request_receiver.try_recv() {
-            self.pending_contact_images.remove(&message.pubkey);
-
-            if let Some(image) = message.image {
-                let texture = ctx.load_texture(
-                    format!("contact-{}", message.pubkey),
-                    image,
-                    TextureOptions::LINEAR,
-                );
-                self.contact_images.insert(message.pubkey, texture);
-            } else {
-                self.failed_contact_images.insert(message.pubkey);
-            }
-
-            updated = true;
-        }
-
-        if updated {
-            ctx.request_repaint();
-        }
-    }
-
-    fn upsert_contact(&mut self, pubkey: String, metadata: ProfileMetadata) {
-        // Only update metadata for contacts that already exist in our list.
-        // New contacts are added explicitly by the user via the UI.
-        if let Some(existing) = self.contacts.iter_mut().find(|c| c.pubkey == pubkey) {
-            let previous_picture = existing.metadata.picture.clone();
-            existing.metadata = metadata.clone();
-            if previous_picture != existing.metadata.picture {
-                self.contact_images.remove(&existing.pubkey);
-                self.pending_contact_images.remove(&existing.pubkey);
-                self.failed_contact_images.remove(&existing.pubkey);
-            }
-            self.contacts
-                .sort_by(|a, b| Self::contact_sort_key(a).cmp(&Self::contact_sort_key(b)));
-        }
-
-        self.profile_metadata
-            .insert(pubkey, ProfileOption::Some(metadata));
-    }
-
-    fn add_contact(&mut self, pubkey: String, petname: Option<String>, metadata: ProfileMetadata) {
-        if self.contacts.iter().any(|c| c.pubkey == pubkey) {
-            return;
-        }
-
-        if let Err(e) = self.db.save_contact(&pubkey, petname.as_deref()) {
-            error!("Failed to save contact to database: {}", e);
-            return;
-        }
-
-        self.contacts.push(Contact {
-            pubkey: pubkey.clone(),
-            petname,
-            metadata: metadata.clone(),
-        });
-        self.contacts
-            .sort_by(|a, b| Self::contact_sort_key(a).cmp(&Self::contact_sort_key(b)));
-
-        self.profile_metadata
-            .insert(pubkey, ProfileOption::Some(metadata));
-    }
-
-    fn remove_contact(&mut self, pubkey: &str) {
-        if let Err(e) = self.db.delete_contact(pubkey) {
-            error!("Failed to delete contact from database: {}", e);
-            return;
-        }
-
-        self.contacts.retain(|c| c.pubkey != pubkey);
-        self.contact_images.remove(pubkey);
-        self.pending_contact_images.remove(pubkey);
-        self.failed_contact_images.remove(pubkey);
-    }
-
-    fn update_contact_petname(&mut self, pubkey: &str, petname: Option<String>) {
-        if let Err(e) = self.db.update_contact_petname(pubkey, petname.as_deref()) {
-            error!("Failed to update contact petname in database: {}", e);
-            return;
-        }
-
-        if let Some(contact) = self.contacts.iter_mut().find(|c| c.pubkey == pubkey) {
-            contact.petname = petname;
-        }
-        self.contacts
-            .sort_by(|a, b| Self::contact_sort_key(a).cmp(&Self::contact_sort_key(b)));
-    }
 }
 
-fn render_contacts_page(app: &mut Hoot, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.heading("Contacts");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("+ Add Contact").clicked() {
-                app.state.contacts.show_add_form = !app.state.contacts.show_add_form;
-                app.state.contacts.add_error = None;
-            }
-        });
-    });
-
-    ui.add_space(8.0);
-
-    // Add contact form
-    if app.state.contacts.show_add_form {
-        Frame::none()
-            .fill(style::CARD_BG)
-            .stroke(Stroke::new(1.0, style::CARD_STROKE))
-            .inner_margin(Margin::symmetric(16.0, 12.0))
-            .rounding(8.0)
-            .show(ui, |ui| {
-                ui.label(RichText::new("Add New Contact").strong());
-                ui.add_space(4.0);
-
-                ui.horizontal(|ui| {
-                    ui.label("Public Key:");
-                    ui.add_sized(
-                        [ui.available_width(), 24.0],
-                        egui::TextEdit::singleline(&mut app.state.contacts.add_pubkey_input)
-                            .hint_text("npub1... or hex pubkey"),
-                    );
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Petname:     ");
-                    ui.add_sized(
-                        [ui.available_width(), 24.0],
-                        egui::TextEdit::singleline(&mut app.state.contacts.add_petname_input)
-                            .hint_text("Optional nickname for this contact"),
-                    );
-                });
-
-                if let Some(err) = &app.state.contacts.add_error {
-                    ui.colored_label(Color32::RED, err.clone());
-                }
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        let raw = app.state.contacts.add_pubkey_input.trim().to_string();
-                        let petname_raw = app.state.contacts.add_petname_input.trim().to_string();
-                        let petname = if petname_raw.is_empty() {
-                            None
-                        } else {
-                            Some(petname_raw)
-                        };
-
-                        // Try parsing the pubkey
-                        use nostr::FromBech32;
-                        let parsed = nostr::PublicKey::from_bech32(&raw)
-                            .or_else(|_| nostr::PublicKey::from_hex(&raw));
-
-                        match parsed {
-                            Ok(pk) => {
-                                let pk_hex = pk.to_string();
-                                if app.contacts.iter().any(|c| c.pubkey == pk_hex) {
-                                    app.state.contacts.add_error =
-                                        Some("Contact already exists.".to_string());
-                                } else {
-                                    // Grab whatever metadata we already have cached
-                                    let metadata = app
-                                        .profile_metadata
-                                        .get(&pk_hex)
-                                        .and_then(|opt| match opt {
-                                            ProfileOption::Some(m) => Some(m.clone()),
-                                            _ => None,
-                                        })
-                                        .unwrap_or_default();
-
-                                    app.add_contact(pk_hex, petname, metadata);
-
-                                    // Reset form
-                                    app.state.contacts.add_pubkey_input.clear();
-                                    app.state.contacts.add_petname_input.clear();
-                                    app.state.contacts.show_add_form = false;
-                                    app.state.contacts.add_error = None;
-                                }
-                            }
-                            Err(_) => {
-                                app.state.contacts.add_error = Some(
-                                    "Invalid public key. Use npub1... or 64-char hex.".to_string(),
-                                );
-                            }
-                        }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        app.state.contacts.show_add_form = false;
-                        app.state.contacts.add_pubkey_input.clear();
-                        app.state.contacts.add_petname_input.clear();
-                        app.state.contacts.add_error = None;
-                    }
-                });
-            });
-        ui.add_space(8.0);
-    }
-
-    if app.contacts.is_empty() {
-        ui.label("No contacts yet. Add one above!");
-        return;
-    }
-
-    // Track actions to apply after the loop (can't mutate app while iterating)
-    let mut contact_to_remove: Option<String> = None;
-    let mut petname_to_save: Option<(String, Option<String>)> = None;
-
-    ScrollArea::vertical()
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            let total = app.contacts.len();
-
-            for index in 0..total {
-                let contact = app.contacts[index].clone();
-                app.ensure_contact_image_request(&contact);
-
-                let is_editing =
-                    app.state.contacts.editing_pubkey.as_ref() == Some(&contact.pubkey);
-
-                Frame::none()
-                    .fill(style::CARD_BG)
-                    .stroke(Stroke::new(1.0, style::CARD_STROKE))
-                    .inner_margin(Margin::symmetric(16.0, 12.0))
-                    .rounding(8.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            draw_contact_avatar(app, ui, &contact);
-                            ui.add_space(12.0);
-
-                            ui.vertical(|ui| {
-                                // Petname row (editable)
-                                if is_editing {
-                                    ui.horizontal(|ui| {
-                                        ui.label("Petname:");
-                                        ui.text_edit_singleline(
-                                            &mut app.state.contacts.editing_petname_buf,
-                                        );
-                                        if ui.button("Save").clicked() {
-                                            let new_petname = app
-                                                .state
-                                                .contacts
-                                                .editing_petname_buf
-                                                .trim()
-                                                .to_string();
-                                            let petname = if new_petname.is_empty() {
-                                                None
-                                            } else {
-                                                Some(new_petname)
-                                            };
-                                            petname_to_save =
-                                                Some((contact.pubkey.clone(), petname));
-                                            app.state.contacts.editing_pubkey = None;
-                                        }
-                                        if ui.button("Cancel").clicked() {
-                                            app.state.contacts.editing_pubkey = None;
-                                        }
-                                    });
-                                } else {
-                                    let display = contact.display_name();
-                                    ui.label(RichText::new(&display).strong());
-
-                                    if let Some(petname) = &contact.petname {
-                                        // Show the nostr name underneath the petname
-                                        if let Some(nostr_name) = contact
-                                            .metadata
-                                            .display_name
-                                            .as_ref()
-                                            .or(contact.metadata.name.as_ref())
-                                        {
-                                            if nostr_name != petname {
-                                                ui.label(
-                                                    RichText::new(format!("({})", nostr_name))
-                                                        .small()
-                                                        .color(style::TEXT_MUTED),
-                                                );
-                                            }
-                                        }
-                                    } else if let Some(name) = contact.metadata.name.as_ref() {
-                                        if contact.metadata.display_name.as_ref() != Some(name) {
-                                            ui.label(name);
-                                        }
-                                    }
-
-                                    ui.label(
-                                        RichText::new(&contact.pubkey)
-                                            .monospace()
-                                            .small()
-                                            .color(style::TEXT_MUTED),
-                                    );
-                                }
-                            });
-
-                            // Action buttons pushed to right
-                            if !is_editing {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui
-                                            .button(RichText::new("X").color(Color32::RED))
-                                            .on_hover_text("Remove contact")
-                                            .clicked()
-                                        {
-                                            contact_to_remove = Some(contact.pubkey.clone());
-                                        }
-
-                                        if ui.button("Edit").on_hover_text("Edit petname").clicked()
-                                        {
-                                            app.state.contacts.editing_pubkey =
-                                                Some(contact.pubkey.clone());
-                                            app.state.contacts.editing_petname_buf =
-                                                contact.petname.clone().unwrap_or_default();
-                                        }
-                                    },
-                                );
-                            }
-                        });
-                    });
-
-                ui.add_space(4.0);
-            }
-        });
-
-    // Apply deferred mutations
-    if let Some(pubkey) = contact_to_remove {
-        app.remove_contact(&pubkey);
-    }
-    if let Some((pubkey, petname)) = petname_to_save {
-        app.update_contact_petname(&pubkey, petname);
-    }
-}
-
-fn draw_contact_avatar(app: &Hoot, ui: &mut egui::Ui, contact: &Contact) {
-    let size = Vec2::splat(CONTACT_AVATAR_SIZE);
-
-    if let Some(texture) = app.contact_images.get(&contact.pubkey) {
-        ui.add(egui::Image::new((texture.id(), size)).maintain_aspect_ratio(true));
-        return;
-    }
-
-    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.circle_filled(rect.center(), CONTACT_AVATAR_SIZE / 2.0, style::ACCENT);
-    painter.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        contact.initials(),
-        FontId::proportional(18.0),
-        Color32::WHITE,
-    );
-}
-
-fn fetch_profile_image(url: &str) -> Option<ColorImage> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        debug!("Skipping unsupported contact image URL: {}", url);
-        return None;
-    }
-
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-    {
-        Ok(client) => client,
-        Err(err) => {
-            debug!("Failed to build HTTP client for contact image: {}", err);
-            return None;
-        }
-    };
-
-    match client.get(url).send() {
-        Ok(response) => {
-            if !response.status().is_success() {
-                warn!(
-                    "Contact image request returned status {} for {}",
-                    response.status(),
-                    url
-                );
-                return None;
-            }
-
-            match response.bytes() {
-                Ok(bytes) => decode_image(bytes.as_ref()),
-                Err(err) => {
-                    debug!("Failed to read contact image bytes: {}", err);
-                    None
-                }
-            }
-        }
-        Err(err) => {
-            debug!("Failed to fetch contact image {}: {}", url, err);
-            None
-        }
-    }
-}
-
-fn decode_image(bytes: &[u8]) -> Option<ColorImage> {
-    let mut rgba = match image::load_from_memory(bytes) {
-        Ok(img) => img.to_rgba8(),
-        Err(err) => {
-            debug!("Failed to decode contact image: {}", err);
-            return None;
-        }
-    };
-
-    if rgba.width() > 256 || rgba.height() > 256 {
-        rgba = image::imageops::resize(&rgba, 256, 256, image::imageops::FilterType::Triangle);
-    }
-
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    let pixels = rgba
-        .as_raw()
-        .chunks_exact(4)
-        .map(|chunk| Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3]))
-        .collect::<Vec<_>>();
-
-    Some(ColorImage { size, pixels })
-}
 
 impl eframe::App for Hoot {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

@@ -1,9 +1,8 @@
 use crate::profile_metadata::{
     get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption,
 };
-use crate::relay::Subscription;
 use eframe::egui::{self, RichText};
-use nostr::{Keys, PublicKey, ToBech32};
+use nostr::{Keys, ToBech32};
 use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -516,15 +515,7 @@ impl AddAccountWindow {
     }
 
     fn validate_nsec(input: &str) -> Result<Keys, String> {
-        if input.is_empty() {
-            return Err("Please enter a private key".to_string());
-        }
-
-        use nostr::FromBech32;
-        match nostr::SecretKey::from_bech32(input) {
-            Ok(secret_key) => Ok(Keys::new(secret_key)),
-            Err(_) => Err("Invalid nsec format".to_string()),
-        }
+        crate::account_manager::validate_nsec(input)
     }
 
     fn save_account(
@@ -584,31 +575,6 @@ impl AddAccountWindow {
     }
 
     fn update_gift_wrap_subscription(app: &mut crate::Hoot) {
-        if app.account_manager.loaded_keys.is_empty() {
-            return;
-        }
-
-        let mut gw_sub = Subscription::default();
-        let public_keys: Vec<PublicKey> = app
-            .account_manager
-            .loaded_keys
-            .iter()
-            .map(|k| k.public_key())
-            .collect();
-
-        let filter = nostr::Filter::new().kind(nostr::Kind::GiftWrap).custom_tag(
-            nostr::SingleLetterTag {
-                character: nostr::Alphabet::P,
-                uppercase: false,
-            },
-            public_keys,
-        );
-
-        gw_sub.filter(filter);
-
-        match app.relays.add_subscription(gw_sub) {
-            Ok(_) => debug!("Updated gift-wrap subscription with new account"),
-            Err(e) => error!("Failed to update gift-wrap subscription: {}", e),
-        }
+        app.update_gift_wrap_subscription();
     }
 }

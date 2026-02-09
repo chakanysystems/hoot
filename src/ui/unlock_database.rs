@@ -67,26 +67,13 @@ impl UnlockDatabase {
             Ok(_) => {
                 app.state.unlock_database.secret_input.clear();
                 app.state.unlock_database.error_string.clear();
-                app.status = HootStatus::Initalizing;
+                app.status = HootStatus::Initializing;
                 app.page = crate::Page::Inbox;
             }
             Err(e) => {
                 error!("Error when trying to load database: {}", e);
                 app.state.unlock_database.secret_input.clear();
-
-                let msg = match e.downcast_ref::<rusqlite_migration::Error>() {
-                    Some(rusqlite_migration::Error::RusqliteError { err, .. }) => {
-                        match err.sqlite_error_code() {
-                            Some(rusqlite::ErrorCode::NotADatabase) => {
-                                error!("Wrong password given or the database is corrupted.");
-                                "Wrong password".to_string()
-                            }
-                            _ => e.to_string(),
-                        }
-                    }
-                    _ => e.to_string(),
-                };
-                app.state.unlock_database.error_string = msg;
+                app.state.unlock_database.error_string = crate::db::format_unlock_error(&e);
             }
         }
     }

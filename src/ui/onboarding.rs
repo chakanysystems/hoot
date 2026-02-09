@@ -1,7 +1,6 @@
 use crate::profile_metadata::{
     get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption,
 };
-use crate::relay::Subscription;
 use crate::{Hoot, Page};
 use eframe::egui;
 use nostr::key::Keys;
@@ -100,15 +99,7 @@ impl OnboardingScreen {
     }
 
     fn format_unlock_error(e: &anyhow::Error) -> String {
-        match e.downcast_ref::<rusqlite_migration::Error>() {
-            Some(rusqlite_migration::Error::RusqliteError { err, .. }) => {
-                match err.sqlite_error_code() {
-                    Some(rusqlite::ErrorCode::NotADatabase) => "Wrong password".to_string(),
-                    _ => format!("Database error: {}", e),
-                }
-            }
-            _ => format!("Database error: {}", e),
-        }
+        crate::db::format_unlock_error(e)
     }
 
     // ── Page: Welcome ───────────────────────────────────────────────────
@@ -633,14 +624,7 @@ impl OnboardingScreen {
     }
 
     fn validate_nsec(input: &str) -> Result<Keys, String> {
-        if input.is_empty() {
-            return Err("Please enter a private key".to_string());
-        }
-        use nostr::FromBech32;
-        match nostr::SecretKey::from_bech32(input) {
-            Ok(secret_key) => Ok(Keys::new(secret_key)),
-            Err(_) => Err("Invalid nsec format".to_string()),
-        }
+        crate::account_manager::validate_nsec(input)
     }
 
     fn save_account(app: &mut Hoot) -> bool {
@@ -689,32 +673,7 @@ impl OnboardingScreen {
     }
 
     fn update_gift_wrap_subscription(app: &mut Hoot) {
-        if app.account_manager.loaded_keys.is_empty() {
-            return;
-        }
-
-        let public_keys: Vec<PublicKey> = app
-            .account_manager
-            .loaded_keys
-            .iter()
-            .map(|k| k.public_key())
-            .collect();
-
-        let filter = nostr::Filter::new().kind(nostr::Kind::GiftWrap).custom_tag(
-            nostr::SingleLetterTag {
-                character: nostr::Alphabet::P,
-                uppercase: false,
-            },
-            public_keys,
-        );
-
-        let mut gw_sub = Subscription::default();
-        gw_sub.filter(filter);
-
-        match app.relays.add_subscription(gw_sub) {
-            Ok(_) => debug!("Updated gift-wrap subscription with new account"),
-            Err(e) => error!("Failed to update gift-wrap subscription: {}", e),
-        }
+        app.update_gift_wrap_subscription();
     }
 }
 

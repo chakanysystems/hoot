@@ -7,6 +7,18 @@ use nostr::{Event, Keys, SecretKey};
 use pollster::FutureExt as _;
 use tracing::{debug, error};
 
+/// Parse and validate an nsec (bech32 private key) string, returning Keys on success.
+pub fn validate_nsec(input: &str) -> Result<Keys, String> {
+    if input.is_empty() {
+        return Err("Please enter a private key".to_string());
+    }
+    use nostr::FromBech32;
+    match nostr::SecretKey::from_bech32(input) {
+        Ok(secret_key) => Ok(Keys::new(secret_key)),
+        Err(_) => Err("Invalid nsec format".to_string()),
+    }
+}
+
 pub struct AccountManager {
     pub loaded_keys: Vec<Keys>,
 }

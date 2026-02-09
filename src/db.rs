@@ -563,9 +563,22 @@ struct RawEventData {
     pubkey: PublicKey,
 }
 
-/// Check if an event is a gift wrap
 fn is_gift_wrap(event: &Event) -> bool {
     event.kind == Kind::GiftWrap
+}
+
+/// Format a database unlock error into a user-friendly message.
+/// Detects the "wrong password" case from SQLCipher's NotADatabase error code.
+pub fn format_unlock_error(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<rusqlite_migration::Error>() {
+        Some(rusqlite_migration::Error::RusqliteError { err, .. }) => {
+            match err.sqlite_error_code() {
+                Some(rusqlite::ErrorCode::NotADatabase) => "Wrong password".to_string(),
+                _ => format!("Database error: {}", e),
+            }
+        }
+        _ => format!("Database error: {}", e),
+    }
 }
 
 #[cfg(test)]

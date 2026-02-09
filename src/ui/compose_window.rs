@@ -290,8 +290,4 @@ impl ComposeWindow {
         open
     }
 
-    // Keep the original show method for backward compatibility
-    pub fn show(app: &mut crate::Hoot, ui: &mut egui::Ui, id: egui::Id) {
-        Self::show_window(app, ui.ctx(), id);
-    }
 }
