@@ -32,6 +32,7 @@ pub struct TableEntry {
     pub subject: String,
     pub pubkey: String,
     pub created_at: i64,
+    pub thread_count: i64,
 }
 
 
@@ -573,7 +574,16 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                     ui.label(RichText::new(label).strong());
                                 });
                                 row.col(|ui| {
-                                    ui.label(&event.subject);
+                                    ui.horizontal(|ui| {
+                                        ui.label(&event.subject);
+                                        if event.thread_count > 1 {
+                                            ui.label(
+                                                RichText::new(format!("{}", event.thread_count))
+                                                    .small()
+                                                    .color(style::TEXT_MUTED),
+                                            );
+                                        }
+                                    });
                                 });
                                 row.col(|ui| {
                                     ui.label(

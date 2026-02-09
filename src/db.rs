@@ -307,21 +307,45 @@ impl Db {
     pub fn get_top_level_messages(&self) -> Result<Vec<TableEntry>> {
         let mut stmt = self.connection
             .prepare(
-                "SELECT DISTINCT e.id, e.content, e.created_at, e.pubkey, jsonb_extract(value, '$[1]') AS subject
-FROM events e, json_each(e.tags) AS tag
-WHERE jsonb_extract(tag.value, '$[0]') = 'subject'
-AND (EXISTS (
-    SELECT 1
-    FROM json_each(e.tags) AS tag
-    WHERE jsonb_extract(tag.value, '$[0]') = 'e'
+                "WITH RECURSIVE
+roots AS (
+    SELECT DISTINCT e.id
+    FROM events e, json_each(e.tags) AS tag
+    WHERE jsonb_extract(tag.value, '$[0]') = 'subject'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM json_each(e.tags) AS etag
+        WHERE jsonb_extract(etag.value, '$[0]') = 'e'
+        AND EXISTS (SELECT 1 FROM events WHERE id = jsonb_extract(etag.value, '$[1]'))
+    )
+),
+thread AS (
+    SELECT id as root_id, id as msg_id FROM roots
+    UNION
+    SELECT t.root_id, e.id
+    FROM thread t, events e, json_each(e.tags) AS etag
+    WHERE jsonb_extract(etag.value, '$[0]') = 'e'
+    AND jsonb_extract(etag.value, '$[1]') = t.msg_id
 )
-   OR NOT EXISTS (
-    SELECT 1
-    FROM events f, json_each(f.tags) AS tag
-    WHERE jsonb_extract(tag.value, '$[0]') = 'e'
-      AND jsonb_extract(tag.value, '$[1]') = e.id
-))
-ORDER BY created_at DESC
+SELECT
+    r.id,
+    le.content,
+    le.created_at,
+    re.pubkey,
+    (SELECT jsonb_extract(stag.value, '$[1]')
+     FROM json_each(le.tags) AS stag
+     WHERE jsonb_extract(stag.value, '$[0]') = 'subject'
+     LIMIT 1) as subject,
+    (SELECT COUNT(*) FROM thread t WHERE t.root_id = r.id) as thread_count
+FROM roots r
+JOIN events re ON re.id = r.id
+JOIN events le ON le.id = (
+    SELECT t2.msg_id FROM thread t2
+    JOIN events e2 ON e2.id = t2.msg_id
+    WHERE t2.root_id = r.id
+    ORDER BY e2.created_at DESC
+    LIMIT 1)
+ORDER BY le.created_at DESC
             ")?;
         let msgs_iter = stmt.query_map([], |row| {
             Ok(TableEntry {
@@ -330,6 +354,7 @@ ORDER BY created_at DESC
                 created_at: row.get(2)?,
                 pubkey: row.get(3)?,
                 subject: row.get(4)?,
+                thread_count: row.get(5)?,
             })
         })?;
 
