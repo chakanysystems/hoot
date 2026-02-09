@@ -1,8 +1,8 @@
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 pub struct ImageMessage {
@@ -46,7 +46,13 @@ impl ImageLoader {
 
         thread::spawn(move || {
             let image = fetch_image(&url);
-            if sender.send(ImageMessage { key: key_clone, image }).is_err() {
+            if sender
+                .send(ImageMessage {
+                    key: key_clone,
+                    image,
+                })
+                .is_err()
+            {
                 debug!("Image receiver dropped before image arrived");
             }
         });
@@ -150,7 +156,9 @@ fn decode_image(bytes: &[u8]) -> Option<ColorImage> {
     let pixels = rgba
         .as_raw()
         .chunks_exact(4)
-        .map(|chunk| eframe::egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3]))
+        .map(|chunk| {
+            eframe::egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+        })
         .collect::<Vec<_>>();
 
     Some(ColorImage { size, pixels })

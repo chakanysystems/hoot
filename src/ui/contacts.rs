@@ -1,9 +1,12 @@
+use crate::db::Db;
 use crate::image_loader::ImageLoader;
 use crate::profile_metadata::ProfileMetadata;
-use crate::db::Db;
-use eframe::egui::{self, Align2, Color32, FontId, Frame, Margin, RichText, ScrollArea, Sense, Stroke, TextureHandle, Vec2};
-use std::collections::HashMap;
 use crate::profile_metadata::ProfileOption;
+use eframe::egui::{
+    self, Align2, Color32, FontId, Frame, Margin, RichText, ScrollArea, Sense, Stroke,
+    TextureHandle, Vec2,
+};
+use std::collections::HashMap;
 use tracing::error;
 
 #[derive(Clone)]
@@ -170,14 +173,14 @@ impl ContactsManager {
     }
 
     pub fn find_petname(&self, pubkey: &str) -> Option<&str> {
-        self.find_contact(pubkey)
-            .and_then(|c| c.petname.as_deref())
+        self.find_contact(pubkey).and_then(|c| c.petname.as_deref())
     }
 
     pub fn ensure_contact_images_loaded(&mut self) {
         for contact in &self.contacts {
             if let Some(url) = contact.picture_url() {
-                self.image_loader.request(contact.pubkey.clone(), url.to_string());
+                self.image_loader
+                    .request(contact.pubkey.clone(), url.to_string());
             }
         }
     }
@@ -276,8 +279,9 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                                         })
                                         .unwrap_or_default();
 
-                                    if let Err(e) =
-                                        app.contacts_manager.add_contact(&app.db, pk_hex, petname, metadata)
+                                    if let Err(e) = app
+                                        .contacts_manager
+                                        .add_contact(&app.db, pk_hex, petname, metadata)
                                     {
                                         error!("Failed to add contact: {}", e);
                                         app.state.contacts.add_error =
@@ -440,7 +444,10 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
         }
     }
     if let Some((pubkey, petname)) = petname_to_save {
-        if let Err(e) = app.contacts_manager.update_petname(&app.db, &pubkey, petname) {
+        if let Err(e) = app
+            .contacts_manager
+            .update_petname(&app.db, &pubkey, petname)
+        {
             error!("Failed to update contact petname: {}", e);
         }
     }

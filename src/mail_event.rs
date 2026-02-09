@@ -50,6 +50,7 @@ impl MailMessage {
 
         let mut event_list: HashMap<PublicKey, Event> = HashMap::new();
         for pubkey in pubkeys_to_send_to {
+            // TODO: randomize gift wrap created_ats
             let wrapped_event =
                 EventBuilder::gift_wrap(sending_keys, &pubkey, base_event.clone(), None)
                     .block_on()

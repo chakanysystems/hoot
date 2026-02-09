@@ -289,5 +289,4 @@ impl ComposeWindow {
 
         open
     }
-
 }

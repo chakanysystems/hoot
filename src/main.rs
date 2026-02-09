@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // for windows release
 
-use anyhow::bail;
+use crate::mail_event::MAIL_EVENT_KIND;
 use eframe::egui::{
     self, Color32, FontDefinitions, FontId, Frame, Margin, RichText, ScrollArea, Sense, Stroke,
     Vec2b,
@@ -8,8 +8,8 @@ use eframe::egui::{
 use egui::FontFamily::Proportional;
 use egui_extras::{Column, TableBuilder};
 use nostr::{event::Kind, EventId, TagKind};
-use std::collections::HashMap;
-use std::{panic, thread};
+use std::collections::{HashMap, HashSet};
+use std::panic;
 use tracing::{debug, error, info, warn, Level};
 
 mod account_manager;
@@ -113,6 +113,7 @@ pub struct ContactsPageState {
 pub struct Hoot {
     pub page: Page,
     focused_post: String,
+    show_trashed_post: bool,
     status: HootStatus,
     state: HootState,
     relays: relay::RelayPool,
@@ -121,6 +122,7 @@ pub struct Hoot {
     pub active_account: Option<nostr::Keys>,
     db: db::Db,
     table_entries: Vec<TableEntry>,
+    trash_entries: Vec<TableEntry>,
     profile_metadata: HashMap<String, profile_metadata::ProfileOption>,
     pub contacts_manager: ContactsManager,
     drafts: Vec<db::Draft>,
@@ -180,10 +182,21 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
             error!("something went wrong trying to load keys: {}", e);
         }
 
+        if let Err(e) = app.db.purge_deleted_events() {
+            error!("Failed to purge deleted events: {}", e);
+        }
+
+        let now = chrono::Utc::now().timestamp();
+        if let Err(e) = app.db.purge_expired_trash(now) {
+            error!("Failed to purge expired trash: {}", e);
+        }
+
         match app.db.get_top_level_messages() {
             Ok(msgs) => app.table_entries = msgs,
             Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
         }
+
+        app.refresh_trash();
 
         if !app.account_manager.loaded_keys.is_empty() {
             app.update_gift_wrap_subscription();
@@ -218,6 +231,98 @@ fn process_message(app: &mut Hoot, msg: &relay::RelayMessage) {
     }
 }
 
+fn apply_deletions(
+    app: &mut Hoot,
+    event_ids: Vec<String>,
+    author_pubkey: Option<&str>,
+    source_event_id: Option<&str>,
+) -> Result<(), anyhow::Error> {
+    if event_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut scoped_event_ids: Vec<String> = Vec::new();
+    let mut unscoped_event_ids: Vec<String> = Vec::new();
+    for event_id in event_ids {
+        match app.db.get_event_kind_pubkey(&event_id) {
+            Ok(Some((kind, pubkey))) => {
+                let is_gift_wrap = kind == i64::from(Kind::GiftWrap.as_u16());
+                let is_mail = kind == i64::from(MAIL_EVENT_KIND);
+                if is_gift_wrap {
+                    continue;
+                }
+
+                if is_mail {
+                    if let Some(author) = author_pubkey {
+                        if author == pubkey {
+                            scoped_event_ids.push(event_id);
+                        }
+                    } else {
+                        unscoped_event_ids.push(event_id);
+                    }
+                } else {
+                    unscoped_event_ids.push(event_id);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => error!("Failed to load event {} metadata: {}", event_id, e),
+        }
+    }
+
+    let mut apply_event_ids: Vec<String> = Vec::new();
+    apply_event_ids.extend(scoped_event_ids.iter().cloned());
+    apply_event_ids.extend(unscoped_event_ids.iter().cloned());
+
+    if apply_event_ids.is_empty() {
+        return Ok(());
+    }
+
+    if !scoped_event_ids.is_empty() {
+        app.db
+            .record_deletions(&scoped_event_ids, author_pubkey, source_event_id)?;
+    }
+    if !unscoped_event_ids.is_empty() {
+        app.db
+            .record_deletions(&unscoped_event_ids, None, source_event_id)?;
+    }
+
+    if let Err(e) = app.db.delete_from_trash(&apply_event_ids) {
+        error!("Failed to remove deleted events from trash: {}", e);
+    }
+
+    let mut wrap_ids: Vec<String> = Vec::new();
+    for event_id in &apply_event_ids {
+        match app.db.get_wrap_ids_for_inner(event_id) {
+            Ok(ids) => wrap_ids.extend(ids),
+            Err(e) => error!("Failed to load gift wrap ids for {}: {}", event_id, e),
+        }
+    }
+    if !wrap_ids.is_empty() {
+        app.db
+            .record_deletion_markers(&wrap_ids, source_event_id)?;
+    }
+
+    let mut removed_ids: HashSet<String> = apply_event_ids.into_iter().collect();
+    for wrap_id in wrap_ids {
+        removed_ids.insert(wrap_id);
+    }
+    if !removed_ids.is_empty() {
+        app.events
+            .retain(|ev| !removed_ids.contains(&ev.id.to_string()));
+        if removed_ids.contains(&app.focused_post) {
+            app.page = Page::Inbox;
+            app.focused_post.clear();
+            app.show_trashed_post = false;
+        }
+        match app.db.get_top_level_messages() {
+            Ok(msgs) => app.table_entries = msgs,
+            Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
+        }
+        app.refresh_trash();
+    }
+    Ok(())
+}
+
 fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
@@ -236,8 +341,31 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
     }
     debug!("Verified event: {:?}", event);
 
-    if let Ok(true) = app.db.has_event(&event.id.to_string()) {
-        debug!("Skipping already stored event: {}", event.id);
+    if event.kind == Kind::EventDeletion {
+        let event_ids: Vec<String> = event.tags.event_ids().map(|id| id.to_hex()).collect();
+        if !event_ids.is_empty() {
+            let author_pubkey = event.pubkey.to_string();
+            let deletion_id = event.id.to_string();
+            if let Err(e) = apply_deletions(
+                app,
+                event_ids,
+                Some(author_pubkey.as_str()),
+                Some(deletion_id.as_str()),
+            ) {
+                error!("Failed to apply deletion event {}: {}", event.id, e);
+            }
+        }
+        return;
+    }
+
+    let event_id = event.id.to_string();
+    let event_author = event.pubkey.to_string();
+    if let Ok(true) = app.db.is_deleted(&event_id, Some(event_author.as_str())) {
+        debug!("Skipping deleted event: {}", event.id);
+        return;
+    }
+    if let Ok(true) = app.db.is_trashed(&event_id) {
+        debug!("Skipping trashed event: {}", event.id);
         return;
     }
 
@@ -245,7 +373,13 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
         debug!("Got profile metadata");
 
         let deserialized_metadata: profile_metadata::ProfileMetadata =
-            serde_json::from_str(&event.content).unwrap();
+            match serde_json::from_str(&event.content) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    error!("Invalid metadata event {}: {}", event.id, e);
+                    return;
+                }
+            };
         app.profile_metadata.insert(
             event.pubkey.to_string(),
             ProfileOption::Some(deserialized_metadata.clone()),
@@ -258,11 +392,94 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
             }
             Err(e) => error!("Error when saving profile metadata to DB: {}", e),
         }
+        return;
+    }
+
+    if event.kind == Kind::GiftWrap {
+        if let Ok(true) = app.db.gift_wrap_exists(&event.id.to_string()) {
+            debug!("Skipping already stored gift wrap: {}", event.id);
+            return;
+        }
+        if let Ok(true) = app.db.is_deleted(&event.id.to_string(), None) {
+            debug!("Skipping deleted gift wrap: {}", event.id);
+            return;
+        }
+        match app.account_manager.unwrap_gift_wrap(&event) {
+            Ok(unwrapped) => {
+                if unwrapped.sender != unwrapped.rumor.pubkey {
+                    warn!("Gift wrap seal signer mismatch for event {}", event.id);
+                    return;
+                }
+
+                let mut rumor = unwrapped.rumor.clone();
+                rumor.ensure_id();
+                if let Err(e) = rumor.verify_id() {
+                    error!("Invalid rumor id for gift wrap {}: {}", event.id, e);
+                    return;
+                }
+                let rumor_id = rumor
+                    .id
+                    .expect("Invalid Gift Wrapped Event: There is no ID!")
+                    .to_hex();
+                let author_pubkey = rumor.pubkey.to_string();
+                if let Ok(true) = app.db.is_deleted(&rumor_id, Some(author_pubkey.as_str())) {
+                    if let Err(e) = app.db.record_deletion_markers(
+                        &[event.id.to_string()],
+                        None,
+                    ) {
+                        error!("Failed to record gift wrap deletion {}: {}", event.id, e);
+                    }
+                    return;
+                }
+                if let Ok(true) = app.db.is_trashed(&rumor_id) {
+                    let recipient = event
+                        .tags
+                        .find(TagKind::p())
+                        .and_then(|tag| tag.content())
+                        .map(|val| val.to_string());
+                    if let Err(e) = app.db.save_gift_wrap_map(
+                        &event.id.to_string(),
+                        &rumor_id,
+                        recipient.as_deref(),
+                        event.created_at.as_u64() as i64,
+                    ) {
+                        error!("Failed to save gift wrap map for trashed rumor: {}", e);
+                    }
+                    return;
+                }
+
+                let recipient = event
+                    .tags
+                    .find(TagKind::p())
+                    .and_then(|tag| tag.content())
+                    .map(|val| val.to_string());
+
+                app.events.push(event.clone());
+
+                if let Err(e) = app
+                    .db
+                    .store_event(&event, Some(&unwrapped), recipient.as_deref())
+                {
+                    error!("Failed to store event in database: {}", e);
+                } else {
+                    debug!("Successfully stored event with id {} in database", event.id);
+                }
+            }
+            Err(e) => {
+                error!("Failed to unwrap gift wrap {}: {}", event.id, e);
+            }
+        }
+        return;
+    }
+
+    if let Ok(true) = app.db.has_event(&event.id.to_string()) {
+        debug!("Skipping already stored event: {}", event.id);
+        return;
     }
 
     app.events.push(event.clone());
 
-    if let Err(e) = app.db.store_event(&event, &mut app.account_manager) {
+    if let Err(e) = app.db.store_event(&event, None, None) {
         error!("Failed to store event in database: {}", e);
     } else {
         debug!("Successfully stored event with id {} in database", event.id);
@@ -379,7 +596,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                     ("📝 Drafts", Page::Drafts, app.drafts.len()),
                     ("⭐ Starred", Page::Starred, 0),
                     ("📁 Archived", Page::Archived, 0),
-                    ("🗑 Trash", Page::Trash, 0),
+                    ("🗑 Trash", Page::Trash, app.trash_entries.len()),
                 ];
 
                 for (label, page, count) in &nav_items {
@@ -600,6 +817,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                 if row.response().clicked() {
                                     app.focused_post = event.id.clone();
                                     app.page = Page::Post;
+                                    app.show_trashed_post = false;
                                 }
                             });
                         });
@@ -612,7 +830,34 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                 ui::settings::SettingsScreen::ui(app, ui);
             }
             Page::Post => {
-                let events = app.db.get_email_thread(&app.focused_post).unwrap();
+                let events = if app.show_trashed_post {
+                    app.db.get_email_thread_including_trash(&app.focused_post)
+                } else {
+                    app.db.get_email_thread(&app.focused_post)
+                };
+                let events = match events {
+                    Ok(events) => events,
+                    Err(e) => {
+                        error!("Failed to load thread for {}: {}", app.focused_post, e);
+                        app.page = Page::Inbox;
+                        app.focused_post.clear();
+                        return;
+                    }
+                };
+
+                let mut event_ids: Vec<String> = Vec::new();
+                for ev in &events {
+                    if let Some(event_id) = ev.id.as_ref() {
+                        event_ids.push(event_id.to_hex());
+                    }
+                }
+                let trashed_ids = match app.db.get_trashed_event_ids(&event_ids) {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        error!("Failed to load trashed event ids: {}", e);
+                        Default::default()
+                    }
+                };
 
                 ScrollArea::vertical()
                     .auto_shrink([false; 2])
@@ -620,28 +865,52 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                         for ev in events {
                             ui.add_space(8.0);
 
+                            let event_id = ev.id;
+                            let author = ev.author;
+
                             Frame::none()
                                 .fill(style::CARD_BG)
                                 .stroke(Stroke::new(1.0, style::CARD_STROKE))
                                 .inner_margin(Margin::same(16.0))
                                 .rounding(8.0)
                                 .show(ui, |ui| {
+                                    if event_id.is_none() || author.is_none() {
+                                        ui.label(
+                                            RichText::new("Error: malformed message (missing ID or author)")
+                                                .color(Color32::RED),
+                                        );
+                                        if !ev.subject.is_empty() {
+                                            ui.label(format!("Subject: {}", ev.subject));
+                                        }
+                                        return;
+                                    }
+                                    let event_id = event_id.unwrap();
+                                    let author = author.unwrap();
+
+                                    if trashed_ids.contains(&event_id.to_hex()) {
+                                        ui.label(
+                                            RichText::new("This message is in Trash")
+                                                .small()
+                                                .color(style::TEXT_MUTED),
+                                        );
+                                        ui.add_space(6.0);
+                                    }
                                     ui.heading(&ev.subject);
                                     ui.add_space(4.0);
 
                                     // Metadata grid
-                                    egui::Grid::new(format!("email_metadata-{:?}", ev.id))
+                                    let author_pk = author.to_string();
+                                    egui::Grid::new(format!("email_metadata-{}", event_id.to_hex()))
                                         .num_columns(2)
                                         .spacing([8.0, 4.0])
                                         .show(ui, |ui| {
                                             ui.label(
                                                 RichText::new("From").color(style::TEXT_MUTED),
                                             );
-                                            let author_pk = ev.author.unwrap().to_string();
                                             let _ = get_profile_metadata(app, author_pk.clone());
                                             let from_label = app
                                                 .resolve_name(&author_pk)
-                                                .unwrap_or_else(|| author_pk);
+                                                .unwrap_or_else(|| author_pk.clone());
                                             ui.label(RichText::new(from_label).strong());
                                             ui.end_row();
 
@@ -671,15 +940,40 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                                             // TODO: Handle edit
                                         }
                                         if ui.button("🗑️ Delete").clicked() {
-                                            // TODO: Handle delete
+                                            // TODO: broadcast NIP-09 EventDeletion to relays
+                                            let now = chrono::Utc::now().timestamp();
+                                            let purge_after = now + 30 * 24 * 60 * 60;
+                                            let event_id_hex = event_id.to_hex();
+                                            if let Err(e) = app
+                                                .db
+                                                .record_trash(&[event_id_hex.clone()], purge_after)
+                                            {
+                                                error!("Failed to move event to trash: {}", e);
+                                            } else {
+                                                app.events
+                                                    .retain(|ev| ev.id.to_string() != event_id_hex);
+                                                if app.focused_post == event_id_hex {
+                                                    app.page = Page::Inbox;
+                                                    app.focused_post.clear();
+                                                    app.show_trashed_post = false;
+                                                }
+                                                match app.db.get_top_level_messages() {
+                                                    Ok(msgs) => app.table_entries = msgs,
+                                                    Err(e) => error!(
+                                                        "Could not fetch table entries to display from DB: {}",
+                                                        e
+                                                    ),
+                                                }
+                                                app.refresh_trash();
+                                            }
                                         }
                                         if ui.button("↩️ Reply").clicked() {
                                             let mut parent_events: Vec<EventId> =
                                                 ev.parent_events.unwrap_or(Vec::new());
-                                            parent_events.push(ev.id.unwrap());
+                                            parent_events.push(event_id);
                                             let state = ui::compose_window::ComposeWindowState {
                                                 subject: format!("Re: {}", ev.subject),
-                                                to_field: ev.author.unwrap().to_string(),
+                                                to_field: author.to_string(),
                                                 content: String::new(),
                                                 parent_events,
                                                 selected_account: None,
@@ -857,6 +1151,125 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
                     }
                 }
             }
+            Page::Trash => {
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.heading("Trash");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Refresh").clicked() {
+                            app.refresh_trash();
+                        }
+                    });
+                });
+
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                if app.trash_entries.is_empty() {
+                    ui.add_space(40.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("Trash is empty")
+                                .size(16.0)
+                                .color(style::TEXT_MUTED),
+                        );
+                    });
+                } else {
+                    let mut to_restore: Option<String> = None;
+                    let mut to_delete: Option<String> = None;
+
+                    TableBuilder::new(ui)
+                        .column(Column::initial(160.0).at_least(100.0)) // Sender
+                        .column(Column::remainder()) // Subject
+                        .column(Column::initial(100.0).at_least(70.0)) // Time
+                        .column(Column::initial(140.0).at_least(120.0)) // Actions
+                        .striped(true)
+                        .sense(Sense::click())
+                        .auto_shrink(Vec2b { x: false, y: false })
+                        .header(28.0, |mut header| {
+                            header.col(|ui| {
+                                ui.label(RichText::new("From").small().color(style::TEXT_MUTED));
+                            });
+                            header.col(|ui| {
+                                ui.label(
+                                    RichText::new("Subject").small().color(style::TEXT_MUTED),
+                                );
+                            });
+                            header.col(|ui| {
+                                ui.label(RichText::new("Date").small().color(style::TEXT_MUTED));
+                            });
+                            header.col(|ui| {
+                                ui.label(RichText::new("Actions").small().color(style::TEXT_MUTED));
+                            });
+                        })
+                        .body(|body| {
+                            let events: Vec<TableEntry> = app.trash_entries.to_vec();
+                            body.rows(style::INBOX_ROW_HEIGHT, events.len(), |mut row| {
+                                let event = &events[row.index()];
+
+                                row.col(|ui| {
+                                    let _ = get_profile_metadata(app, event.pubkey.clone());
+                                    let label = app
+                                        .resolve_name(&event.pubkey)
+                                        .unwrap_or_else(|| event.pubkey.to_string());
+                                    ui.label(RichText::new(label).strong());
+                                });
+                                row.col(|ui| {
+                                    ui.label(&event.subject);
+                                });
+                                row.col(|ui| {
+                                    ui.label(
+                                        RichText::new(style::format_timestamp(event.created_at))
+                                            .color(style::TEXT_MUTED)
+                                            .small(),
+                                    );
+                                });
+                                row.col(|ui| {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Restore").clicked() {
+                                            to_restore = Some(event.id.clone());
+                                        }
+                                        if ui.button("Delete now").clicked() {
+                                            // TODO: broadcast NIP-09 EventDeletion to relays
+                                            to_delete = Some(event.id.clone());
+                                        }
+                                    });
+                                });
+
+                                if row.response().clicked() {
+                                    app.focused_post = event.id.clone();
+                                    app.page = Page::Post;
+                                    app.show_trashed_post = true;
+                                }
+                            });
+                        });
+
+                    if let Some(event_id) = to_restore {
+                        if let Err(e) = app.db.restore_from_trash(&event_id) {
+                            error!("Failed to restore from trash: {}", e);
+                        } else {
+                            match app.db.get_top_level_messages() {
+                                Ok(msgs) => app.table_entries = msgs,
+                                Err(e) => error!(
+                                    "Could not fetch table entries to display from DB: {}",
+                                    e
+                                ),
+                            }
+                            app.refresh_trash();
+                        }
+                    }
+
+                    if let Some(event_id) = to_delete {
+                        if let Err(e) = apply_deletions(app, vec![event_id.clone()], None, None) {
+                            error!("Failed to delete trashed event: {}", e);
+                        } else {
+                            app.refresh_trash();
+                        }
+                    }
+                }
+            }
             Page::Unlock => {
                 ui::unlock_database::UnlockDatabase::ui(app, ui);
             }
@@ -911,6 +1324,7 @@ impl Hoot {
         Self {
             page,
             focused_post: String::new(),
+            show_trashed_post: false,
             status: HootStatus::PreUnlock,
             state: Default::default(),
             relays: relay::RelayPool::new(),
@@ -919,6 +1333,7 @@ impl Hoot {
             active_account: None,
             db,
             table_entries: Vec::new(),
+            trash_entries: Vec::new(),
             profile_metadata: HashMap::new(),
             contacts_manager: ContactsManager::new(),
             drafts: Vec::new(),
@@ -929,6 +1344,13 @@ impl Hoot {
         match self.db.get_drafts() {
             Ok(drafts) => self.drafts = drafts,
             Err(e) => error!("Failed to load drafts: {}", e),
+        }
+    }
+
+    fn refresh_trash(&mut self) {
+        match self.db.get_trash_messages() {
+            Ok(entries) => self.trash_entries = entries,
+            Err(e) => error!("Failed to load trash entries: {}", e),
         }
     }
 

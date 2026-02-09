@@ -1,18 +1,16 @@
-use std::any::Any;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use anyhow::Result;
-use egui_extras::Table;
 use include_dir::{include_dir, Dir};
-use nostr::{Event, EventId, Kind, PublicKey};
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
+use nostr::nips::nip59::UnwrappedGift;
+use nostr::{Event, EventId, PublicKey};
 use rusqlite::{Connection, OptionalExtension};
-use rusqlite_migration::{Migrations, M};
+use rusqlite_migration::Migrations;
 use serde_json::json;
 use tracing::{debug, info};
 
-use crate::account_manager::AccountManager;
 use crate::mail_event::{MailMessage, MAIL_EVENT_KIND};
 use crate::ProfileMetadata;
 use crate::TableEntry;
@@ -94,37 +92,57 @@ impl Db {
         Ok(())
     }
 
-    pub fn store_event(&self, event: &Event, account_manager: &mut AccountManager) -> Result<()> {
-        // Try to unwrap the gift wrap if this event is a gift wrap
-        let store_unwrapped =
-            is_gift_wrap(event) && account_manager.unwrap_gift_wrap(event).is_ok();
-
-        if store_unwrapped {
-            let unwrapped = account_manager.unwrap_gift_wrap(event).unwrap();
+    pub fn store_event(
+        &self,
+        event: &Event,
+        unwrapped: Option<&UnwrappedGift>,
+        gift_wrap_recipient: Option<&str>,
+    ) -> Result<()> {
+        if let Some(unwrapped) = unwrapped {
             let mut rumor = unwrapped.rumor.clone();
             rumor.ensure_id();
+
+            if unwrapped.sender != rumor.pubkey {
+                anyhow::bail!("Seal signer does not match rumor pubkey");
+            }
 
             let id = rumor
                 .id
                 .expect("Invalid Gift Wrapped Event: There is no ID!")
                 .to_hex();
+            let author_pubkey = rumor.pubkey.to_string();
+            if self.is_deleted(&id, Some(author_pubkey.as_str()))? {
+                return Ok(());
+            }
             let raw = json!(rumor).to_string();
 
             self.connection.execute(
-                "INSERT INTO events (id, raw)
+                "INSERT OR IGNORE INTO events (id, raw)
                  VALUES (?1, ?2)",
-                (id, raw),
+                (id.clone(), raw),
             )?;
-        } else {
-            let id = event.id.to_string();
-            let raw = json!(event).to_string();
 
-            self.connection.execute(
-                "INSERT INTO events (id, raw)
-                 VALUES (?1, ?2)",
-                (id, raw),
+            self.save_gift_wrap_map(
+                &event.id.to_string(),
+                &id,
+                gift_wrap_recipient,
+                event.created_at.as_u64() as i64,
             )?;
+            return Ok(());
         }
+
+        let id = event.id.to_string();
+        let author_pubkey = event.pubkey.to_string();
+        if self.is_deleted(&id, Some(author_pubkey.as_str()))? {
+            return Ok(());
+        }
+        let raw = json!(event).to_string();
+
+        self.connection.execute(
+            "INSERT OR IGNORE INTO events (id, raw)
+             VALUES (?1, ?2)",
+            (id, raw),
+        )?;
 
         Ok(())
     }
@@ -139,6 +157,341 @@ impl Db {
         Ok(count > 0)
     }
 
+    pub fn is_deleted(&self, event_id: &str, author_pubkey: Option<&str>) -> Result<bool> {
+        let count: i64 = if let Some(pubkey) = author_pubkey {
+            self.connection.query_row(
+                "SELECT COUNT(*) FROM deleted_events
+                 WHERE event_id = ?1
+                   AND (author_pubkey IS NULL OR author_pubkey = ?2)",
+                (event_id, pubkey),
+                |row| row.get(0),
+            )?
+        } else {
+            self.connection.query_row(
+                "SELECT COUNT(*) FROM deleted_events WHERE event_id = ?1",
+                (event_id,),
+                |row| row.get(0),
+            )?
+        };
+
+        Ok(count > 0)
+    }
+
+    pub fn is_trashed(&self, event_id: &str) -> Result<bool> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM trash_events WHERE event_id = ?1",
+            (event_id,),
+            |row| row.get(0),
+        )?;
+
+        Ok(count > 0)
+    }
+
+    pub fn record_deletions(
+        &mut self,
+        event_ids: &[String],
+        author_pubkey: Option<&str>,
+        source_event_id: Option<&str>,
+    ) -> Result<()> {
+        let tx = self.connection.transaction()?;
+        let mut deletable_ids: Vec<String> = Vec::new();
+
+        if !event_ids.is_empty() {
+            let placeholders = vec!["?"; event_ids.len()].join(",");
+            let mut select_sql = format!("SELECT id FROM events WHERE id IN ({})", placeholders);
+            if let Some(pubkey) = author_pubkey {
+                select_sql.push_str(" AND pubkey = ?");
+                let params = rusqlite::params_from_iter(
+                    event_ids
+                        .iter()
+                        .map(|id| id as &dyn rusqlite::ToSql)
+                        .chain(std::iter::once(&pubkey as &dyn rusqlite::ToSql)),
+                );
+                let mut stmt = tx.prepare(&select_sql)?;
+                let rows = stmt.query_map(params, |row| row.get(0))?;
+                for row in rows {
+                    deletable_ids.push(row?);
+                }
+            } else {
+                let params = rusqlite::params_from_iter(
+                    event_ids.iter().map(|id| id as &dyn rusqlite::ToSql),
+                );
+                let mut stmt = tx.prepare(&select_sql)?;
+                let rows = stmt.query_map(params, |row| row.get(0))?;
+                for row in rows {
+                    deletable_ids.push(row?);
+                }
+            }
+
+            if !deletable_ids.is_empty() {
+                let placeholders = vec!["?"; deletable_ids.len()].join(",");
+                let mut delete_sql = format!("DELETE FROM events WHERE id IN ({})", placeholders);
+                let mut delete_pmeta_sql = format!(
+                    "DELETE FROM profile_metadata WHERE id IN ({})",
+                    placeholders
+                );
+
+                if let Some(pubkey) = author_pubkey {
+                    delete_sql.push_str(" AND pubkey = ?");
+                    delete_pmeta_sql.push_str(" AND pubkey = ?");
+
+                    let params = rusqlite::params_from_iter(
+                        deletable_ids
+                            .iter()
+                            .map(|id| id as &dyn rusqlite::ToSql)
+                            .chain(std::iter::once(&pubkey as &dyn rusqlite::ToSql)),
+                    );
+                    tx.execute(&delete_sql, params)?;
+
+                    let pmeta_params = rusqlite::params_from_iter(
+                        deletable_ids
+                            .iter()
+                            .map(|id| id as &dyn rusqlite::ToSql)
+                            .chain(std::iter::once(&pubkey as &dyn rusqlite::ToSql)),
+                    );
+                    tx.execute(&delete_pmeta_sql, pmeta_params)?;
+                } else {
+                    let params = rusqlite::params_from_iter(
+                        deletable_ids.iter().map(|id| id as &dyn rusqlite::ToSql),
+                    );
+                    tx.execute(&delete_sql, params)?;
+
+                    let pmeta_params = rusqlite::params_from_iter(
+                        deletable_ids.iter().map(|id| id as &dyn rusqlite::ToSql),
+                    );
+                    tx.execute(&delete_pmeta_sql, pmeta_params)?;
+                }
+            }
+        }
+
+        if !deletable_ids.is_empty() {
+            if let Some(author) = author_pubkey {
+                let mut insert_stmt = tx.prepare(
+                    "INSERT OR IGNORE INTO deleted_events (event_id, author_pubkey, source_event_id)
+                     VALUES (?1, ?2, ?3)",
+                )?;
+                for event_id in &deletable_ids {
+                    insert_stmt.execute((event_id, author, source_event_id))?;
+                }
+            } else {
+                let mut stmt = tx.prepare(
+                    "INSERT OR REPLACE INTO deleted_events (event_id, author_pubkey, source_event_id)
+                     VALUES (?1, NULL, ?2)",
+                )?;
+                for event_id in &deletable_ids {
+                    stmt.execute((event_id, source_event_id))?;
+                }
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn record_trash(&mut self, event_ids: &[String], purge_after: i64) -> Result<()> {
+        if event_ids.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self.connection.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO trash_events (event_id, purge_after)
+                 VALUES (?1, ?2)",
+            )?;
+            for event_id in event_ids {
+                stmt.execute((event_id, purge_after))?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn purge_expired_trash(&mut self, now: i64) -> Result<Vec<String>> {
+        let tx = self.connection.transaction()?;
+
+        let mut event_ids: Vec<String> = Vec::new();
+        {
+            let mut stmt =
+                tx.prepare("SELECT event_id FROM trash_events WHERE purge_after <= ?1")?;
+            let rows = stmt.query_map((now,), |row| row.get(0))?;
+            for row in rows {
+                event_ids.push(row?);
+            }
+        }
+
+        if !event_ids.is_empty() {
+            let placeholders = vec!["?"; event_ids.len()].join(",");
+            let delete_events_sql = format!("DELETE FROM events WHERE id IN ({})", placeholders);
+            let delete_pmeta_sql = format!(
+                "DELETE FROM profile_metadata WHERE id IN ({})",
+                placeholders
+            );
+            let delete_trash_sql = format!(
+                "DELETE FROM trash_events WHERE event_id IN ({})",
+                placeholders
+            );
+
+            let mut insert_stmt = tx.prepare(
+                "INSERT OR IGNORE INTO deleted_events (event_id, author_pubkey, source_event_id)
+                 VALUES (?1, NULL, NULL)",
+            )?;
+            for event_id in &event_ids {
+                insert_stmt.execute((event_id,))?;
+            }
+
+            let params =
+                rusqlite::params_from_iter(event_ids.iter().map(|id| id as &dyn rusqlite::ToSql));
+            tx.execute(&delete_events_sql, params)?;
+
+            let params =
+                rusqlite::params_from_iter(event_ids.iter().map(|id| id as &dyn rusqlite::ToSql));
+            tx.execute(&delete_pmeta_sql, params)?;
+
+            let params =
+                rusqlite::params_from_iter(event_ids.iter().map(|id| id as &dyn rusqlite::ToSql));
+            tx.execute(&delete_trash_sql, params)?;
+        }
+
+        tx.commit()?;
+        Ok(event_ids)
+    }
+
+    pub fn restore_from_trash(&mut self, event_id: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM trash_events WHERE event_id = ?1", (event_id,))?;
+        Ok(())
+    }
+
+    pub fn purge_deleted_events(&mut self) -> Result<()> {
+        let tx = self.connection.transaction()?;
+        tx.execute(
+            "DELETE FROM events
+             WHERE EXISTS (
+                 SELECT 1 FROM deleted_events d
+                 WHERE d.event_id = events.id
+                   AND (d.author_pubkey IS NULL OR d.author_pubkey = events.pubkey)
+             )",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM profile_metadata
+             WHERE EXISTS (
+                 SELECT 1 FROM deleted_events d
+                 WHERE d.event_id = profile_metadata.id
+                   AND (d.author_pubkey IS NULL OR d.author_pubkey = profile_metadata.pubkey)
+             )",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record deletion markers without requiring the IDs to exist in the events table.
+    /// Used for gift wrap IDs which are stored in gift_wrap_map, not in events.
+    pub fn record_deletion_markers(
+        &self,
+        event_ids: &[String],
+        source_event_id: Option<&str>,
+    ) -> Result<()> {
+        if event_ids.is_empty() {
+            return Ok(());
+        }
+        let mut stmt = self.connection.prepare(
+            "INSERT OR IGNORE INTO deleted_events (event_id, author_pubkey, source_event_id)
+             VALUES (?1, NULL, ?2)",
+        )?;
+        for event_id in event_ids {
+            stmt.execute((event_id, source_event_id))?;
+        }
+        Ok(())
+    }
+
+    pub fn save_gift_wrap_map(
+        &self,
+        wrap_id: &str,
+        inner_id: &str,
+        recipient_pubkey: Option<&str>,
+        created_at: i64,
+    ) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO gift_wrap_map (wrap_id, inner_id, recipient_pubkey, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            (wrap_id, inner_id, recipient_pubkey, created_at),
+        )?;
+        Ok(())
+    }
+
+    pub fn gift_wrap_exists(&self, wrap_id: &str) -> Result<bool> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM gift_wrap_map WHERE wrap_id = ?1",
+            (wrap_id,),
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn delete_from_trash(&mut self, event_ids: &[String]) -> Result<()> {
+        if event_ids.is_empty() {
+            return Ok(());
+        }
+
+        let placeholders = vec!["?"; event_ids.len()].join(",");
+        let sql = format!(
+            "DELETE FROM trash_events WHERE event_id IN ({})",
+            placeholders
+        );
+        let params =
+            rusqlite::params_from_iter(event_ids.iter().map(|id| id as &dyn rusqlite::ToSql));
+        self.connection.execute(&sql, params)?;
+        Ok(())
+    }
+
+    pub fn get_wrap_ids_for_inner(&self, inner_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .connection
+            .prepare("SELECT wrap_id FROM gift_wrap_map WHERE inner_id = ?1")?;
+        let rows = stmt.query_map((inner_id,), |row| row.get(0))?;
+        let mut wrap_ids = Vec::new();
+        for row in rows {
+            wrap_ids.push(row?);
+        }
+        Ok(wrap_ids)
+    }
+
+    pub fn get_trashed_event_ids(&self, event_ids: &[String]) -> Result<HashSet<String>> {
+        let mut trashed = HashSet::new();
+        if event_ids.is_empty() {
+            return Ok(trashed);
+        }
+
+        let placeholders = vec!["?"; event_ids.len()].join(",");
+        let sql = format!(
+            "SELECT event_id FROM trash_events WHERE event_id IN ({})",
+            placeholders
+        );
+        let mut stmt = self.connection.prepare(&sql)?;
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(event_ids.iter().map(|id| id as &dyn rusqlite::ToSql)),
+            |row| row.get(0),
+        )?;
+        for row in rows {
+            trashed.insert(row?);
+        }
+        Ok(trashed)
+    }
+
+    pub fn get_event_kind_pubkey(&self, event_id: &str) -> Result<Option<(i64, String)>> {
+        self.connection
+            .query_row(
+                "SELECT kind, pubkey FROM events WHERE id = ?1",
+                (event_id,),
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     // there is a high chance i am a retard.
     // there is a very high chance that there is a better way to do this
     // but it's not coming to mind! guess we'll find out.
@@ -149,7 +502,6 @@ impl Db {
             .connection
             .prepare("SELECT * FROM profile_metadata WHERE pubkey = ?")?;
 
-        use anyhow::Context;
         Ok(stmt
             .query_one([pubkey], |row| {
                 Ok(ProfileMetadata {
@@ -305,13 +657,21 @@ impl Db {
 
     /// These messages will be displayed inside the top-level table.
     pub fn get_top_level_messages(&self) -> Result<Vec<TableEntry>> {
-        let mut stmt = self.connection
-            .prepare(
-                "WITH RECURSIVE
+        let mut stmt = self.connection.prepare(
+            "WITH RECURSIVE
 roots AS (
     SELECT DISTINCT e.id
     FROM events e, json_each(e.tags) AS tag
     WHERE jsonb_extract(tag.value, '$[0]') = 'subject'
+    AND NOT EXISTS (
+        SELECT 1 FROM deleted_events d
+        WHERE d.event_id = e.id
+        AND (d.author_pubkey IS NULL OR d.author_pubkey = e.pubkey)
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM trash_events t
+        WHERE t.event_id = e.id
+    )
     AND NOT EXISTS (
         SELECT 1
         FROM json_each(e.tags) AS etag
@@ -326,12 +686,21 @@ thread AS (
     FROM thread t, events e, json_each(e.tags) AS etag
     WHERE jsonb_extract(etag.value, '$[0]') = 'e'
     AND jsonb_extract(etag.value, '$[1]') = t.msg_id
+    AND NOT EXISTS (
+        SELECT 1 FROM deleted_events d
+        WHERE d.event_id = e.id
+        AND (d.author_pubkey IS NULL OR d.author_pubkey = e.pubkey)
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM trash_events t
+        WHERE t.event_id = e.id
+    )
 )
 SELECT
     r.id,
     le.content,
     le.created_at,
-    re.pubkey,
+    le.pubkey,
     (SELECT jsonb_extract(stag.value, '$[1]')
      FROM json_each(le.tags) AS stag
      WHERE jsonb_extract(stag.value, '$[0]') = 'subject'
@@ -346,7 +715,8 @@ JOIN events le ON le.id = (
     ORDER BY e2.created_at DESC
     LIMIT 1)
 ORDER BY le.created_at DESC
-            ")?;
+            ",
+        )?;
         let msgs_iter = stmt.query_map([], |row| {
             Ok(TableEntry {
                 id: row.get(0)?,
@@ -363,11 +733,53 @@ ORDER BY le.created_at DESC
         Ok(messages)
     }
 
+    pub fn get_trash_messages(&self) -> Result<Vec<TableEntry>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT
+                 e.id,
+                 e.content,
+                 e.created_at,
+                 e.pubkey,
+                 COALESCE((SELECT jsonb_extract(stag.value, '$[1]')
+                  FROM json_each(e.tags) AS stag
+                  WHERE jsonb_extract(stag.value, '$[0]') = 'subject'
+                  LIMIT 1), '') as subject,
+                 1 as thread_count
+             FROM events e
+             JOIN trash_events t ON t.event_id = e.id
+             ORDER BY t.trashed_at DESC",
+        )?;
+
+        let msgs_iter = stmt.query_map([], |row| {
+            Ok(TableEntry {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                created_at: row.get(2)?,
+                pubkey: row.get(3)?,
+                subject: row.get(4)?,
+                thread_count: row.get(5)?,
+            })
+        })?;
+
+        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+        Ok(messages)
+    }
+
     /// Get all event IDs for mail events
     pub fn get_mail_event_ids(&self) -> Result<Vec<String>> {
-        let mut stmt = self
-            .connection
-            .prepare("SELECT id FROM events WHERE kind = ?")?;
+        let mut stmt = self.connection.prepare(
+            "SELECT id FROM events
+             WHERE kind = ?
+               AND NOT EXISTS (
+                   SELECT 1 FROM deleted_events d
+                   WHERE d.event_id = events.id
+                     AND (d.author_pubkey IS NULL OR d.author_pubkey = events.pubkey)
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM trash_events t
+                   WHERE t.event_id = events.id
+               )",
+        )?;
 
         let mail_kind = u32::from(MAIL_EVENT_KIND as u16);
 
@@ -392,84 +804,124 @@ ORDER BY le.created_at DESC
     /// Fetches an entire email thread starting from a given event ID.
     /// It traverses up to the root and down to the latest reply.
     pub fn get_email_thread(&self, event_id: &str) -> Result<Vec<MailMessage>> {
-        // This CTE recursively finds all parent and child event IDs related to the initial event.
-        // The final SELECT now fetches the entire 'raw' JSON object for each event in the thread.
-        let query = r#"
+        self.get_email_thread_inner(event_id, true)
+    }
+
+    pub fn get_email_thread_including_trash(&self, event_id: &str) -> Result<Vec<MailMessage>> {
+        self.get_email_thread_inner(event_id, false)
+    }
+
+    fn get_email_thread_inner(
+        &self,
+        event_id: &str,
+        exclude_trash: bool,
+    ) -> Result<Vec<MailMessage>> {
+        let trash_filter = if exclude_trash {
+            "AND NOT EXISTS (
+                SELECT 1 FROM trash_events t
+                WHERE t.event_id = {alias}.id
+            )"
+        } else {
+            ""
+        };
+
+        let query = format!(
+            r#"
         WITH RECURSIVE thread AS (
             -- 1. Start with the initial event
             SELECT id, raw FROM events WHERE id = ?1
+            AND NOT EXISTS (
+                SELECT 1 FROM deleted_events d
+                WHERE d.event_id = events.id
+                AND (d.author_pubkey IS NULL OR d.author_pubkey = events.pubkey)
+            )
+            {trash_seed}
             UNION
             -- 2. Recursively find all replies to the events in the thread
             SELECT e.id, e.raw
             FROM events e, json_each(e.tags) AS t, thread
             WHERE json_extract(t.value, '$[0]') = 'e' AND json_extract(t.value, '$[1]') = thread.id
+            AND NOT EXISTS (
+                SELECT 1 FROM deleted_events d
+                WHERE d.event_id = e.id
+                AND (d.author_pubkey IS NULL OR d.author_pubkey = e.pubkey)
+            )
+            {trash_replies}
             UNION
             -- 3. Recursively find the parent of the events in the thread
             SELECT e.id, e.raw
             FROM events e, thread
             JOIN json_each(thread.raw, '$.tags') as t
             WHERE json_extract(t.value, '$[0]') = 'e' AND e.id = json_extract(t.value, '$[1]')
+            AND NOT EXISTS (
+                SELECT 1 FROM deleted_events d
+                WHERE d.event_id = e.id
+                AND (d.author_pubkey IS NULL OR d.author_pubkey = e.pubkey)
+            )
+            {trash_parents}
         )
         SELECT DISTINCT raw FROM thread
         ORDER BY json_extract(raw, '$.created_at') ASC;
-    "#;
+    "#,
+            trash_seed = trash_filter.replace("{alias}", "events"),
+            trash_replies = trash_filter.replace("{alias}", "e"),
+            trash_parents = trash_filter.replace("{alias}", "e"),
+        );
 
-        let mut stmt = self.connection.prepare(query)?;
+        let mut stmt = self.connection.prepare(&query)?;
         let event_iter = stmt.query_map([event_id], |row| {
             let raw_json: String = row.get(0)?;
-
-            // Deserialize the JSON into our temporary struct.
-            let parsed_event: RawEventData = serde_json::from_str(&raw_json)
-                .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
-
-            // Process tags to extract recipients, parents, and subject.
-            let mut to = Vec::new();
-            let mut parent_events = Vec::new();
-            let mut subject = String::new();
-
-            for tag in parsed_event.tags {
-                if tag.len() >= 2 {
-                    match tag[0].as_str() {
-                        "p" => {
-                            // 'p' tags are for public keys (recipients)
-                            if let Ok(pubkey) = PublicKey::parse(&tag[1]) {
-                                to.push(pubkey);
-                            }
-                        }
-                        "e" => {
-                            // 'e' tags are for event IDs (threading)
-                            if let Ok(event_id) = EventId::parse(&tag[1]) {
-                                parent_events.push(event_id);
-                            }
-                        }
-                        "subject" => {
-                            subject = tag[1].clone();
-                        }
-                        _ => {} // Ignore other tags
-                    }
-                }
-            }
-
-            // Construct the final MailMessage struct.
-            Ok(MailMessage {
-                id: EventId::parse(&parsed_event.id).ok(),
-                created_at: Some(parsed_event.created_at),
-                content: parsed_event.content,
-                author: Some(parsed_event.pubkey),
-                subject,
-                to,
-                cc: Vec::new(),  // Assuming no 'cc' info in the event tags.
-                bcc: Vec::new(), // Assuming no 'bcc' info in the event tags.
-                parent_events: if parent_events.is_empty() {
-                    None
-                } else {
-                    Some(parent_events)
-                },
-            })
+            Self::parse_mail_message(&raw_json)
         })?;
 
         let thread = event_iter.collect::<Result<Vec<MailMessage>, rusqlite::Error>>()?;
         Ok(thread)
+    }
+
+    fn parse_mail_message(raw_json: &str) -> Result<MailMessage, rusqlite::Error> {
+        let parsed_event: RawEventData = serde_json::from_str(raw_json)
+            .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
+
+        let mut to = Vec::new();
+        let mut parent_events = Vec::new();
+        let mut subject = String::new();
+
+        for tag in parsed_event.tags {
+            if tag.len() >= 2 {
+                match tag[0].as_str() {
+                    "p" => {
+                        if let Ok(pubkey) = PublicKey::parse(&tag[1]) {
+                            to.push(pubkey);
+                        }
+                    }
+                    "e" => {
+                        if let Ok(event_id) = EventId::parse(&tag[1]) {
+                            parent_events.push(event_id);
+                        }
+                    }
+                    "subject" => {
+                        subject = tag[1].clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(MailMessage {
+            id: EventId::parse(&parsed_event.id).ok(),
+            created_at: Some(parsed_event.created_at),
+            content: parsed_event.content,
+            author: Some(parsed_event.pubkey),
+            subject,
+            to,
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            parent_events: if parent_events.is_empty() {
+                None
+            } else {
+                Some(parent_events)
+            },
+        })
     }
 
     // --- Draft methods ---
@@ -586,10 +1038,6 @@ struct RawEventData {
     created_at: i64,
     tags: Vec<Vec<String>>,
     pubkey: PublicKey,
-}
-
-fn is_gift_wrap(event: &Event) -> bool {
-    event.kind == Kind::GiftWrap
 }
 
 /// Format a database unlock error into a user-friendly message.

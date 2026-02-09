@@ -91,7 +91,8 @@ pub fn update_logged_in_profile_metadata(
         public_key.to_string(),
         ProfileOption::Some(metadata.to_owned()),
     );
-    app.contacts_manager.upsert_metadata(public_key.to_string(), metadata.clone());
+    app.contacts_manager
+        .upsert_metadata(public_key.to_string(), metadata.clone());
 
     // convert into nostr event
     let serialized = serde_json::to_string(&metadata)?;
