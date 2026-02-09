@@ -186,22 +186,40 @@ enum HootStatus {
 fn update_app(app: &mut Hoot, ctx: &egui::Context) {
     #[cfg(feature = "profiling")]
     puffin::profile_function!();
-
-    if app.status == HootStatus::PreUnlock {
-        info!("Requesting Database Unlock before proceeding.");
-        app.status = HootStatus::WaitingForUnlock;
-        return;
-    } else if app.status == HootStatus::WaitingForUnlock {
-        // the unlock happens in the render_app function
-        // we can't do anything but wait until HootStatus is Initalizing
-        return;
-    }
-
     let ctx = ctx.clone();
     let wake_ctx = ctx.clone();
     let wake_up = move || {
         wake_ctx.request_repaint();
     };
+
+    if app.status == HootStatus::PreUnlock {
+        info!("Requesting Database Unlock before proceeding.");
+        app.status = HootStatus::WaitingForUnlock;
+        let _ = app
+            .relays
+            .add_url("wss://relay.chakany.systems".to_string(), wake_up.clone());
+
+        let _ = app
+            .relays
+            .add_url("wss://talon.quest".to_string(), wake_up.clone());
+
+        app.relays.keepalive(wake_up);
+        return;
+    } else if app.status == HootStatus::WaitingForUnlock {
+        // the unlock happens in the render_app function
+        // we can't do anything but wait until HootStatus is Initalizing
+        app.relays.keepalive(wake_up);
+        let new_val = app.relays.try_recv();
+        if new_val.is_some() {
+            info!("{:?}", new_val.clone());
+
+            match relay::RelayMessage::from_json(&new_val.unwrap()) {
+                Ok(v) => process_message(app, &v),
+                Err(e) => error!("could not decode message sent from relay: {}", e),
+            };
+        }
+        return;
+    }
 
     if app.status == HootStatus::Initalizing {
         info!("Initalizing Hoot...");
@@ -214,14 +232,6 @@ fn update_app(app: &mut Hoot, ctx: &egui::Context) {
             Ok(msgs) => app.table_entries = msgs,
             Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
         }
-
-        let _ = app
-            .relays
-            .add_url("wss://relay.chakany.systems".to_string(), wake_up.clone());
-
-        let _ = app
-            .relays
-            .add_url("wss://talon.quest".to_string(), wake_up.clone());
 
         if app.account_manager.loaded_keys.len() > 0 {
             let mut gw_sub = relay::Subscription::default();
