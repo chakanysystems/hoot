@@ -3,7 +3,6 @@ use crate::{
     Hoot,
 };
 use eframe::egui::{self, Color32, Direction, Layout, Sense, Ui, Vec2};
-use egui_tabs::Tabs;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use tracing::{error, info};
@@ -22,59 +21,19 @@ pub struct SettingsState {
     pub metadata_state: HashMap<String, RefCell<ProfileMetadataEditingStatus>>,
 }
 
-enum Tab {
-    Profile = 0,
-    Relays = 1,
-    Identity = 2,
-}
-
-impl From<i32> for Tab {
-    fn from(value: i32) -> Self {
-        match value {
-            0 => Tab::Profile,
-            1 => Tab::Relays,
-            2 => Tab::Identity,
-            _ => Tab::Profile, // Default to Profile for invalid values
-        }
-    }
-}
-
-impl From<Tab> for i32 {
-    fn from(tab: Tab) -> Self {
-        tab as i32
-    }
-}
-
 pub struct SettingsScreen {}
 
 impl SettingsScreen {
     pub fn ui(app: &mut Hoot, ui: &mut Ui) {
-        let tabs_response = Tabs::new(3)
-            .height(16.0)
-            .selected(0)
-            .layout(Layout::centered_and_justified(Direction::TopDown))
-            .show(ui, |ui, state| {
-                let current_tab = Tab::from(state.index());
-                use Tab::*;
-                let tab_label = match current_tab {
-                    Profile => "My Profile",
-                    Relays => "Relays",
-                    Identity => "Keys",
-                };
-                ui.add(egui::Label::new(tab_label).selectable(false));
-            });
-        let current_tab: Tab = tabs_response.selected().unwrap().into();
-
-        use Tab::*;
-        match current_tab {
-            Profile => Self::profile(app, ui),
-            Relays => Self::relays(app, ui),
-            Identity => Self::identity(app, ui),
-        }
+        ui.vertical(|ui| {
+            Self::profile(app, ui);
+            ui.add_space(15.0);
+            Self::relays(app, ui);
+        });
     }
 
     fn profile(app: &mut Hoot, ui: &mut Ui) {
-        ui.label("Your profile.");
+        ui.heading("Your profiles");
         use nostr::ToBech32;
         for key in app.account_manager.loaded_keys.clone() {
             // Get metadata about key
@@ -86,7 +45,15 @@ impl SettingsScreen {
                 );
             }
 
-            ui.label(format!("Key ID: {}", key.public_key().to_bech32().unwrap()));
+            ui.horizontal(|ui| {
+                ui.label(format!("Key ID: {}", key.public_key().to_bech32().unwrap()));
+                if ui.button("Remove Key").clicked() {
+                    match app.account_manager.delete_key(&app.db, &key) {
+                        Ok(..) => {}
+                        Err(v) => error!("couldn't remove key: {}", v),
+                    }
+                }
+            });
 
             let profile_metadata =
                 crate::profile_metadata::get_profile_metadata(app, pk_hex.clone()).clone();
@@ -182,6 +149,7 @@ impl SettingsScreen {
                     }
                 }
             });
+            ui.add_space(8.0);
         }
     }
 

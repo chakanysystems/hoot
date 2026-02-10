@@ -15,8 +15,8 @@ mod profile_metadata;
 use profile_metadata::ProfileOption;
 mod relay;
 mod style;
-mod ui;
 mod types;
+mod ui;
 pub use types::*;
 use ui::contacts::ContactsManager;
 
@@ -43,7 +43,7 @@ fn main() -> Result<(), eframe::Error> {
             let mut fonts = FontDefinitions::default();
             fonts.font_data.insert(
                 "Inter".to_owned(),
-                egui::FontData::from_static(include_bytes!("../fonts/Inter.ttf")),
+                egui::FontData::from_static(include_bytes!("../assets/Inter.ttf")),
             );
             fonts
                 .families
@@ -298,22 +298,20 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         _ => render_left_panel(app, ctx),
     }
 
-    egui::CentralPanel::default().show(ctx, |ui| {
-        match app.page {
-            Page::Inbox => ui::inbox::render(app, ui),
-            Page::Post => ui::thread_view::render(app, ui),
-            Page::Drafts => ui::drafts_page::render(app, ui),
-            Page::Trash => ui::trash::render(app, ui),
-            Page::Contacts => ui::contacts::render_contacts_page(app, ui),
-            Page::Settings => ui::settings::SettingsScreen::ui(app, ui),
-            Page::Unlock => ui::unlock_database::UnlockDatabase::ui(app, ui),
-            Page::Onboarding
-            | Page::OnboardingNewUser
-            | Page::OnboardingNewShowKey
-            | Page::OnboardingReturning => ui::onboarding::OnboardingScreen::ui(app, ui),
-            _ => {
-                ui.heading("This hasn't been implemented yet.");
-            }
+    egui::CentralPanel::default().show(ctx, |ui| match app.page {
+        Page::Inbox => ui::inbox::render(app, ui),
+        Page::Post => ui::thread_view::render(app, ui),
+        Page::Drafts => ui::drafts_page::render(app, ui),
+        Page::Trash => ui::trash::render(app, ui),
+        Page::Contacts => ui::contacts::render_contacts_page(app, ui),
+        Page::Settings => ui::settings::SettingsScreen::ui(app, ui),
+        Page::Unlock => ui::unlock_database::UnlockDatabase::ui(app, ui),
+        Page::Onboarding
+        | Page::OnboardingNewUser
+        | Page::OnboardingNewShowKey
+        | Page::OnboardingReturning => ui::onboarding::OnboardingScreen::ui(app, ui),
+        _ => {
+            ui.heading("This hasn't been implemented yet.");
         }
     });
 }
