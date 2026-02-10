@@ -1,6 +1,11 @@
+pub mod account_setup;
 pub mod add_account_window;
 pub mod compose_window;
 pub mod contacts;
+pub mod drafts_page;
+pub mod inbox;
 pub mod onboarding;
 pub mod settings;
+pub mod thread_view;
+pub mod trash;
 pub mod unlock_database;

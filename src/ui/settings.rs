@@ -88,7 +88,8 @@ impl SettingsScreen {
 
             ui.label(format!("Key ID: {}", key.public_key().to_bech32().unwrap()));
 
-            let profile_metadata = crate::get_profile_metadata(app, pk_hex.clone()).clone();
+            let profile_metadata =
+                crate::profile_metadata::get_profile_metadata(app, pk_hex.clone()).clone();
 
             ui.horizontal(|ui| {
                 let key_meta_state = app

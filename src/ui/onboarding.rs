@@ -1,17 +1,9 @@
-use crate::profile_metadata::{
-    get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption,
-};
+use super::account_setup::AccountCreationMode;
 use crate::{Hoot, Page};
 use eframe::egui;
 use nostr::key::Keys;
-use nostr::{PublicKey, ToBech32};
-use tracing::{debug, error, info, warn};
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AccountCreationMode {
-    Generate,
-    Import,
-}
+use nostr::ToBech32;
+use tracing::error;
 
 pub struct OnboardingState {
     pub secret_input: String,
@@ -412,13 +404,7 @@ impl OnboardingScreen {
     }
 
     fn handle_import(app: &mut Hoot, keys: Keys) {
-        let already_exists = app
-            .account_manager
-            .loaded_keys
-            .iter()
-            .any(|k| k.public_key() == keys.public_key());
-
-        if already_exists {
+        if super::account_setup::key_already_exists(app, &keys) {
             app.state.onboarding.error_string = "This account is already added".to_string();
             return;
         }
@@ -427,19 +413,12 @@ impl OnboardingScreen {
         app.state.onboarding.imported_key = Some(keys);
         app.state.onboarding.error_string.clear();
 
-        match get_profile_metadata(app, pubkey_str).clone() {
-            ProfileOption::Some(meta) => {
-                app.state.onboarding.display_name = meta.display_name.clone().unwrap_or_default();
-                app.state.onboarding.name = meta.name.clone().unwrap_or_default();
-                app.state.onboarding.picture_url = meta.picture.clone().unwrap_or_default();
-                app.state.onboarding.metadata_fetched = true;
-                debug!("Pre-filled metadata for imported key");
-            }
-            ProfileOption::Waiting => {
-                debug!("Metadata requested from relays, will populate when received");
-                app.state.onboarding.metadata_fetched = false;
-            }
-        }
+        let (display_name, name, picture_url, fetched) =
+            super::account_setup::fetch_and_prefill_metadata(app, &pubkey_str);
+        app.state.onboarding.display_name = display_name;
+        app.state.onboarding.name = name;
+        app.state.onboarding.picture_url = picture_url;
+        app.state.onboarding.metadata_fetched = fetched;
     }
 
     // ── Step: Configure profile metadata ────────────────────────────────
@@ -589,16 +568,16 @@ impl OnboardingScreen {
                 .clicked()
             {
                 let keypair = nostr::Keys::new(parsed.unwrap());
-                match app.account_manager.save_keys(&app.db, &keypair) {
+                match super::account_setup::save_account(
+                    app, &keypair, "", "", "", false,
+                ) {
                     Ok(()) => {
-                        Self::update_gift_wrap_subscription(app);
-                        app.active_account = Some(keypair);
                         app.page = Page::Inbox;
                         Self::finish_onboarding(app);
                     }
                     Err(e) => {
-                        app.state.onboarding.error_string = format!("Failed to save key: {}", e);
-                        error!("Failed to save key: {}", e);
+                        error!("{}", e);
+                        app.state.onboarding.error_string = e;
                     }
                 }
             }
@@ -624,7 +603,7 @@ impl OnboardingScreen {
     }
 
     fn validate_nsec(input: &str) -> Result<Keys, String> {
-        crate::account_manager::validate_nsec(input)
+        super::account_setup::validate_nsec(input)
     }
 
     fn save_account(app: &mut Hoot) -> bool {
@@ -636,52 +615,27 @@ impl OnboardingScreen {
             }
         };
 
-        if let Err(e) = app.account_manager.save_keys(&app.db, &key) {
-            app.state.onboarding.error_string = format!("Failed to save key: {}", e);
-            error!("Failed to save key: {}", e);
-            return false;
-        }
-
-        app.active_account = Some(key.clone());
-
-        if app.state.onboarding.publish_metadata {
-            Self::publish_metadata(app, key.public_key());
-        }
-
-        Self::update_gift_wrap_subscription(app);
-        info!("Account saved successfully");
-        true
-    }
-
-    fn publish_metadata(app: &mut Hoot, pubkey: PublicKey) {
         let s = &app.state.onboarding;
-        let metadata = ProfileMetadata {
-            display_name: non_empty(&s.display_name),
-            name: non_empty(&s.name),
-            picture: non_empty(&s.picture_url),
-        };
+        let display_name = s.display_name.clone();
+        let name = s.name.clone();
+        let picture_url = s.picture_url.clone();
+        let publish_metadata = s.publish_metadata;
 
-        if metadata.display_name.is_none() && metadata.name.is_none() && metadata.picture.is_none()
-        {
-            return;
+        match super::account_setup::save_account(
+            app,
+            &key,
+            &display_name,
+            &name,
+            &picture_url,
+            publish_metadata,
+        ) {
+            Ok(()) => true,
+            Err(e) => {
+                error!("{}", e);
+                app.state.onboarding.error_string = e;
+                false
+            }
         }
-
-        match update_logged_in_profile_metadata(app, pubkey, metadata) {
-            Ok(_) => info!("Metadata published successfully"),
-            Err(e) => warn!("Failed to publish metadata (non-critical): {}", e),
-        }
-    }
-
-    fn update_gift_wrap_subscription(app: &mut Hoot) {
-        app.update_gift_wrap_subscription();
-    }
-}
-
-fn non_empty(s: &str) -> Option<String> {
-    if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
     }
 }
 

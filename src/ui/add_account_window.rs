@@ -1,15 +1,7 @@
-use crate::profile_metadata::{
-    get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption,
-};
+use super::account_setup::AccountCreationMode;
 use eframe::egui::{self, RichText};
 use nostr::{Keys, ToBech32};
-use tracing::{debug, error, info, warn};
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AccountCreationMode {
-    Generate,
-    Import,
-}
+use tracing::{error, info};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccountCreationStep {
@@ -236,13 +228,7 @@ impl AddAccountWindow {
                 .clicked()
             {
                 if let Ok(keys) = validation_result {
-                    // Check if key already exists
-                    if app
-                        .account_manager
-                        .loaded_keys
-                        .iter()
-                        .any(|k| k.public_key() == keys.public_key())
-                    {
+                    if super::account_setup::key_already_exists(app, &keys) {
                         app.state
                             .add_account_window
                             .get_mut(&id)
@@ -251,33 +237,18 @@ impl AddAccountWindow {
                     } else {
                         let pubkey_str = keys.public_key().to_string();
 
-                        // Update state with imported key
                         let state = app.state.add_account_window.get_mut(&id).unwrap();
-                        state.imported_key = Some(keys.clone());
+                        state.imported_key = Some(keys);
                         state.error_message = None;
 
-                        // Attempt to fetch existing metadata
-                        let metadata_option = get_profile_metadata(app, pubkey_str.clone()).clone();
-                        match metadata_option {
-                            ProfileOption::Some(meta) => {
-                                let state = app.state.add_account_window.get_mut(&id).unwrap();
-                                state.display_name = meta.display_name.clone().unwrap_or_default();
-                                state.name = meta.name.clone().unwrap_or_default();
-                                state.picture_url = meta.picture.clone().unwrap_or_default();
-                                state.metadata_fetched = true;
-                                debug!("Pre-filled metadata for imported key");
-                            }
-                            ProfileOption::Waiting => {
-                                debug!(
-                                    "Metadata requested from relays, will populate when received"
-                                );
-                                let state = app.state.add_account_window.get_mut(&id).unwrap();
-                                state.metadata_fetched = false;
-                            }
-                        }
-
-                        app.state.add_account_window.get_mut(&id).unwrap().step =
-                            AccountCreationStep::ConfigureMetadata;
+                        let (display_name, name, picture_url, fetched) =
+                            super::account_setup::fetch_and_prefill_metadata(app, &pubkey_str);
+                        let state = app.state.add_account_window.get_mut(&id).unwrap();
+                        state.display_name = display_name;
+                        state.name = name;
+                        state.picture_url = picture_url;
+                        state.metadata_fetched = fetched;
+                        state.step = AccountCreationStep::ConfigureMetadata;
                     }
                 }
             }
@@ -515,7 +486,7 @@ impl AddAccountWindow {
     }
 
     fn validate_nsec(input: &str) -> Result<Keys, String> {
-        crate::account_manager::validate_nsec(input)
+        super::account_setup::validate_nsec(input)
     }
 
     fn save_account(
@@ -523,58 +494,13 @@ impl AddAccountWindow {
         state: &AddAccountWindowState,
         key: &Keys,
     ) -> Result<(), String> {
-        // Save the key to secure storage
-        app.account_manager
-            .save_keys(&app.db, &key)
-            .map_err(|e| format!("Failed to save key: {}", e))?;
-
-        // Set as active account
-        app.active_account = Some(key.clone());
-
-        // Publish metadata if requested
-        if state.publish_metadata {
-            let has_metadata = !state.display_name.is_empty()
-                || !state.name.is_empty()
-                || !state.picture_url.is_empty();
-
-            if has_metadata {
-                let metadata = ProfileMetadata {
-                    display_name: if !state.display_name.is_empty() {
-                        Some(state.display_name.clone())
-                    } else {
-                        None
-                    },
-                    name: if !state.name.is_empty() {
-                        Some(state.name.clone())
-                    } else {
-                        None
-                    },
-                    picture: if !state.picture_url.is_empty() {
-                        Some(state.picture_url.clone())
-                    } else {
-                        None
-                    },
-                };
-
-                match update_logged_in_profile_metadata(app, key.public_key(), metadata) {
-                    Ok(_) => {
-                        info!("Metadata published successfully");
-                    }
-                    Err(e) => {
-                        warn!("Failed to publish metadata (non-critical): {}", e);
-                        // Continue - account is saved regardless
-                    }
-                }
-            }
-        }
-
-        // Update relay subscriptions to include new account
-        Self::update_gift_wrap_subscription(app);
-
-        Ok(())
-    }
-
-    fn update_gift_wrap_subscription(app: &mut crate::Hoot) {
-        app.update_gift_wrap_subscription();
+        super::account_setup::save_account(
+            app,
+            key,
+            &state.display_name,
+            &state.name,
+            &state.picture_url,
+            state.publish_metadata,
+        )
     }
 }
