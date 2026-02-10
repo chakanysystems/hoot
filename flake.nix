@@ -48,7 +48,12 @@
         ];
 
         perSystem =
-          { config, system, ... }:
+          {
+            config,
+            system,
+            lib,
+            ...
+          }:
           let
             overlays = [
               (import rust-overlay)
@@ -72,7 +77,15 @@
               rustc = rustToolchain;
             };
 
-            src = craneLib.cleanCargoSource ./.;
+            unfilteredRoot = ./.;
+            src = lib.fileset.toSource {
+              root = unfilteredRoot;
+              fileset = lib.fileset.unions [
+                (craneLib.fileset.commonCargoSources unfilteredRoot)
+                (lib.fileset.maybeMissing ./assets)
+                (lib.fileset.maybeMissing ./migrations)
+              ];
+            };
 
             commonArgs = {
               inherit src;
