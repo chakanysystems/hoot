@@ -13,6 +13,7 @@ mod contacts;
 mod drafts;
 mod events;
 mod queries;
+pub mod sender_status;
 
 pub use drafts::Draft;
 

@@ -69,6 +69,8 @@ pub struct Hoot {
     db: db::Db,
     table_entries: Vec<TableEntry>,
     trash_entries: Vec<TableEntry>,
+    request_entries: Vec<TableEntry>,
+    junk_entries: Vec<TableEntry>,
     profile_metadata: HashMap<String, profile_metadata::ProfileOption>,
     pub contacts_manager: ContactsManager,
     drafts: Vec<db::Draft>,
@@ -185,6 +187,8 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                     ("⭐ Starred", Page::Starred, 0),
                     ("📁 Archived", Page::Archived, 0),
                     ("🗑 Trash", Page::Trash, app.trash_entries.len()),
+                    ("📬 Requests", Page::Requests, app.request_entries.len()),
+                    ("🚫 Junk", Page::Junk, app.junk_entries.len()),
                 ];
 
                 for (label, page, count) in &nav_items {
@@ -303,6 +307,8 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         Page::Post => ui::thread_view::render(app, ui),
         Page::Drafts => ui::drafts_page::render(app, ui),
         Page::Trash => ui::trash::render(app, ui),
+        Page::Requests => ui::requests::render(app, ui),
+        Page::Junk => ui::junk::render(app, ui),
         Page::Contacts => ui::contacts::render_contacts_page(app, ui),
         Page::Settings => ui::settings::SettingsScreen::ui(app, ui),
         Page::Unlock => ui::unlock_database::UnlockDatabase::ui(app, ui),
@@ -364,6 +370,8 @@ impl Hoot {
             db,
             table_entries: Vec::new(),
             trash_entries: Vec::new(),
+            request_entries: Vec::new(),
+            junk_entries: Vec::new(),
             profile_metadata: HashMap::new(),
             contacts_manager: ContactsManager::new(),
             drafts: Vec::new(),
@@ -381,6 +389,20 @@ impl Hoot {
         match self.db.get_trash_messages() {
             Ok(entries) => self.trash_entries = entries,
             Err(e) => error!("Failed to load trash entries: {}", e),
+        }
+    }
+
+    fn refresh_requests(&mut self) {
+        match self.db.get_request_messages() {
+            Ok(entries) => self.request_entries = entries,
+            Err(e) => error!("Failed to load request entries: {}", e),
+        }
+    }
+
+    fn refresh_junk(&mut self) {
+        match self.db.get_junk_messages() {
+            Ok(entries) => self.junk_entries = entries,
+            Err(e) => error!("Failed to load junk entries: {}", e),
         }
     }
 

@@ -1,8 +1,8 @@
 use crate::mail_event::MAIL_EVENT_KIND;
 use crate::profile_metadata::{ProfileMetadata, ProfileOption};
 use crate::relay;
-use crate::Hoot;
 use crate::types::{HootStatus, Page};
+use crate::Hoot;
 use eframe::egui;
 use nostr::event::Kind;
 use nostr::TagKind;
@@ -70,6 +70,8 @@ pub fn update_app(app: &mut Hoot, ctx: &egui::Context) {
         }
 
         app.refresh_trash();
+        app.refresh_requests();
+        app.refresh_junk();
 
         if !app.account_manager.loaded_keys.is_empty() {
             app.update_gift_wrap_subscription();
@@ -171,8 +173,7 @@ pub fn apply_deletions(
         }
     }
     if !wrap_ids.is_empty() {
-        app.db
-            .record_deletion_markers(&wrap_ids, source_event_id)?;
+        app.db.record_deletion_markers(&wrap_ids, source_event_id)?;
     }
 
     let mut removed_ids: HashSet<String> = apply_event_ids.into_iter().collect();
@@ -245,14 +246,13 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
     if event.kind == Kind::Metadata {
         debug!("Got profile metadata");
 
-        let deserialized_metadata: ProfileMetadata =
-            match serde_json::from_str(&event.content) {
-                Ok(meta) => meta,
-                Err(e) => {
-                    error!("Invalid metadata event {}: {}", event.id, e);
-                    return;
-                }
-            };
+        let deserialized_metadata: ProfileMetadata = match serde_json::from_str(&event.content) {
+            Ok(meta) => meta,
+            Err(e) => {
+                error!("Invalid metadata event {}: {}", event.id, e);
+                return;
+            }
+        };
         app.profile_metadata.insert(
             event.pubkey.to_string(),
             ProfileOption::Some(deserialized_metadata.clone()),
@@ -296,10 +296,10 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
                     .to_hex();
                 let author_pubkey = rumor.pubkey.to_string();
                 if let Ok(true) = app.db.is_deleted(&rumor_id, Some(author_pubkey.as_str())) {
-                    if let Err(e) = app.db.record_deletion_markers(
-                        &[event.id.to_string()],
-                        None,
-                    ) {
+                    if let Err(e) = app
+                        .db
+                        .record_deletion_markers(&[event.id.to_string()], None)
+                    {
                         error!("Failed to record gift wrap deletion {}: {}", event.id, e);
                     }
                     return;

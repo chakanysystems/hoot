@@ -30,6 +30,21 @@ roots AS (
         WHERE jsonb_extract(etag.value, '$[0]') = 'e'
         AND EXISTS (SELECT 1 FROM events WHERE id = jsonb_extract(etag.value, '$[1]'))
     )
+    AND (
+        e.pubkey IN (SELECT pubkey FROM pubkeys)
+        OR e.pubkey IN (SELECT pubkey FROM contacts)
+        OR e.pubkey IN (SELECT pubkey FROM sender_status WHERE status = 'allowed')
+        OR (
+            e.pubkey NOT IN (SELECT pubkey FROM sender_status)
+            AND e.pubkey IN (
+                SELECT DISTINCT json_extract(t2.value, '$[1]')
+                FROM events e2, json_each(e2.tags) AS t2
+                WHERE e2.pubkey IN (SELECT pubkey FROM pubkeys)
+                    AND e2.kind = 2024
+                    AND json_extract(t2.value, '$[0]') = 'p'
+            )
+        )
+    )
 ),
 thread AS (
     SELECT id as root_id, id as msg_id FROM roots
@@ -100,6 +115,99 @@ ORDER BY le.created_at DESC
              FROM events e
              JOIN trash_events t ON t.event_id = e.id
              ORDER BY t.trashed_at DESC",
+        )?;
+
+        let msgs_iter = stmt.query_map([], |row| {
+            Ok(TableEntry {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                created_at: row.get(2)?,
+                pubkey: row.get(3)?,
+                subject: row.get(4)?,
+                thread_count: row.get(5)?,
+            })
+        })?;
+
+        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+        Ok(messages)
+    }
+
+    pub fn get_request_messages(&self) -> Result<Vec<TableEntry>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT
+                 e.id,
+                 e.content,
+                 e.created_at,
+                 e.pubkey,
+                 COALESCE((SELECT jsonb_extract(stag.value, '$[1]')
+                  FROM json_each(e.tags) AS stag
+                  WHERE jsonb_extract(stag.value, '$[0]') = 'subject'
+                  LIMIT 1), '') as subject,
+                 1 as thread_count
+             FROM events e, json_each(e.tags) AS tag
+             WHERE jsonb_extract(tag.value, '$[0]') = 'subject'
+             AND e.pubkey NOT IN (SELECT pubkey FROM contacts)
+             AND e.pubkey NOT IN (SELECT pubkey FROM sender_status)
+             AND e.pubkey NOT IN (SELECT pubkey FROM pubkeys)
+             AND e.pubkey NOT IN (
+                 SELECT DISTINCT json_extract(t2.value, '$[1]')
+                 FROM events e2, json_each(e2.tags) AS t2
+                 WHERE e2.pubkey IN (SELECT pubkey FROM pubkeys)
+                     AND e2.kind = 2024
+                     AND json_extract(t2.value, '$[0]') = 'p'
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM deleted_events d
+                 WHERE d.event_id = e.id
+                 AND (d.author_pubkey IS NULL OR d.author_pubkey = e.pubkey)
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM trash_events t
+                 WHERE t.event_id = e.id
+             )
+             ORDER BY e.created_at DESC",
+        )?;
+
+        let msgs_iter = stmt.query_map([], |row| {
+            Ok(TableEntry {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                created_at: row.get(2)?,
+                pubkey: row.get(3)?,
+                subject: row.get(4)?,
+                thread_count: row.get(5)?,
+            })
+        })?;
+
+        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+        Ok(messages)
+    }
+
+    pub fn get_junk_messages(&self) -> Result<Vec<TableEntry>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT
+                 e.id,
+                 e.content,
+                 e.created_at,
+                 e.pubkey,
+                 COALESCE((SELECT jsonb_extract(stag.value, '$[1]')
+                  FROM json_each(e.tags) AS stag
+                  WHERE jsonb_extract(stag.value, '$[0]') = 'subject'
+                  LIMIT 1), '') as subject,
+                 1 as thread_count
+             FROM events e, json_each(e.tags) AS tag
+             WHERE jsonb_extract(tag.value, '$[0]') = 'subject'
+             AND e.pubkey IN (SELECT pubkey FROM sender_status WHERE status = 'junked')
+             AND NOT EXISTS (
+                 SELECT 1 FROM deleted_events d
+                 WHERE d.event_id = e.id
+                 AND (d.author_pubkey IS NULL OR d.author_pubkey = e.pubkey)
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM trash_events t
+                 WHERE t.event_id = e.id
+             )
+             ORDER BY e.created_at DESC",
         )?;
 
         let msgs_iter = stmt.query_map([], |row| {

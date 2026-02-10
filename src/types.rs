@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use eframe::egui;
 use crate::ui;
+use eframe::egui;
+use std::collections::HashMap;
 
 // WE PROBABLY SHOULDN'T MAKE EVERYTHING A STRING, GRR!
 #[derive(Clone, Debug)]
@@ -20,6 +20,8 @@ pub enum Page {
     Starred,
     Archived,
     Trash,
+    Requests,
+    Junk,
     Settings,
     // TODO: fix this mess
     Onboarding,
@@ -40,6 +42,7 @@ pub struct HootState {
     pub settings: ui::settings::SettingsState,
     pub unlock_database: ui::unlock_database::UnlockDatabaseState,
     pub contacts: ContactsPageState,
+    pub requests: RequestsPageState,
 }
 
 #[derive(Default)]
@@ -50,6 +53,11 @@ pub struct ContactsPageState {
     pub editing_pubkey: Option<String>,
     pub editing_petname_buf: String,
     pub add_error: Option<String>,
+}
+
+#[derive(Default)]
+pub struct RequestsPageState {
+    pub add_to_contacts: bool,
 }
 
 #[derive(Debug, PartialEq)]

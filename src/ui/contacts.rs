@@ -451,6 +451,94 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
             error!("Failed to update contact petname: {}", e);
         }
     }
+
+    // Allowed Senders section
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(8.0);
+
+    egui::CollapsingHeader::new(RichText::new("Allowed Senders").strong())
+        .default_open(false)
+        .show(ui, |ui| {
+            use crate::db::sender_status::SenderStatus;
+
+            let allowed = match app.db.get_senders_by_status(&SenderStatus::Allowed) {
+                Ok(senders) => senders,
+                Err(e) => {
+                    error!("Failed to load allowed senders: {}", e);
+                    return;
+                }
+            };
+
+            if allowed.is_empty() {
+                ui.label(RichText::new("No allowed senders").color(style::TEXT_MUTED));
+                return;
+            }
+
+            let mut to_junk: Option<String> = None;
+            let mut to_remove: Option<String> = None;
+
+            for (pubkey, name, display_name, _picture, _created_at) in &allowed {
+                Frame::none()
+                    .fill(style::CARD_BG)
+                    .stroke(Stroke::new(1.0, style::CARD_STROKE))
+                    .inner_margin(Margin::symmetric(16.0, 8.0))
+                    .rounding(8.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let label = display_name
+                                .as_deref()
+                                .or(name.as_deref())
+                                .unwrap_or(pubkey.as_str());
+                            ui.label(RichText::new(label).strong());
+                            ui.label(
+                                RichText::new(pubkey)
+                                    .monospace()
+                                    .small()
+                                    .color(style::TEXT_MUTED),
+                            );
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Remove").clicked() {
+                                        to_remove = Some(pubkey.clone());
+                                    }
+                                    if ui.button("Move to Junk").clicked() {
+                                        to_junk = Some(pubkey.clone());
+                                    }
+                                },
+                            );
+                        });
+                    });
+                ui.add_space(4.0);
+            }
+
+            if let Some(pubkey) = to_junk {
+                if let Err(e) = app.db.set_sender_status(&pubkey, &SenderStatus::Junked) {
+                    error!("Failed to junk sender: {}", e);
+                } else {
+                    app.refresh_requests();
+                    app.refresh_junk();
+                    match app.db.get_top_level_messages() {
+                        Ok(msgs) => app.table_entries = msgs,
+                        Err(e) => error!("Could not refresh inbox: {}", e),
+                    }
+                }
+            }
+
+            if let Some(pubkey) = to_remove {
+                if let Err(e) = app.db.remove_sender_status(&pubkey) {
+                    error!("Failed to remove sender status: {}", e);
+                } else {
+                    app.refresh_requests();
+                    match app.db.get_top_level_messages() {
+                        Ok(msgs) => app.table_entries = msgs,
+                        Err(e) => error!("Could not refresh inbox: {}", e),
+                    }
+                }
+            }
+        });
 }
 
 fn draw_contact_avatar(manager: &ContactsManager, ui: &mut egui::Ui, contact: &Contact) {
