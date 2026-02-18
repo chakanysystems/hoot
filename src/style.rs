@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, Rounding, Stroke, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, Stroke, Vec2};
 use eframe::epaint::Shadow;
 
 // ── Colors ──────────────────────────────────────────────────────────────
@@ -23,14 +23,12 @@ pub fn apply_theme(ctx: &egui::Context) {
     visuals.dark_mode = false;
 
     // Rounded widgets everywhere
-    let rounding = Rounding::same(6.0);
-    visuals.widgets.noninteractive.rounding = rounding;
-    visuals.widgets.inactive.rounding = rounding;
-    visuals.widgets.hovered.rounding = rounding;
-    visuals.widgets.active.rounding = rounding;
-    visuals.widgets.open.rounding = rounding;
-    visuals.window_rounding = Rounding::same(10.0);
-    visuals.menu_rounding = Rounding::same(8.0);
+    let rounding = CornerRadius::same(6);
+    visuals.widgets.noninteractive.corner_radius = rounding;
+    visuals.widgets.inactive.corner_radius = rounding;
+    visuals.widgets.hovered.corner_radius = rounding;
+    visuals.widgets.active.corner_radius = rounding;
+    visuals.widgets.open.corner_radius = rounding;
 
     // Selection highlight uses accent
     visuals.selection.bg_fill = ACCENT_LIGHT;
@@ -38,9 +36,9 @@ pub fn apply_theme(ctx: &egui::Context) {
 
     // Softer window shadow
     visuals.window_shadow = Shadow {
-        offset: Vec2::new(0.0, 4.0),
-        blur: 12.0,
-        spread: 0.0,
+        offset: [0, 4],
+        blur: 12,
+        spread: 0,
         color: Color32::from_black_alpha(30),
     };
 

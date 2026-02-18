@@ -43,7 +43,7 @@ fn main() -> Result<(), eframe::Error> {
             let mut fonts = FontDefinitions::default();
             fonts.font_data.insert(
                 "Inter".to_owned(),
-                egui::FontData::from_static(include_bytes!("../assets/Inter.ttf")),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/Inter.ttf"))),
             );
             fonts
                 .families
@@ -51,7 +51,7 @@ fn main() -> Result<(), eframe::Error> {
                 .unwrap()
                 .insert(0, "Inter".to_owned());
             cc.egui_ctx.set_fonts(fonts);
-            Box::new(Hoot::new(cc))
+            Ok(Box::new(Hoot::new(cc)))
         }),
     )
 }
@@ -108,11 +108,11 @@ fn render_nav_item(ui: &mut egui::Ui, label: &str, is_selected: bool) -> egui::R
 
     if is_selected {
         ui.painter()
-            .rect_filled(rect, egui::Rounding::same(6.0), style::ACCENT_LIGHT);
+            .rect_filled(rect, egui::CornerRadius::same(6), style::ACCENT_LIGHT);
     } else if response.hovered() {
         ui.painter().rect_filled(
             rect,
-            egui::Rounding::same(6.0),
+            egui::CornerRadius::same(6),
             Color32::from_rgba_premultiplied(149, 117, 205, 20),
         );
     }
@@ -138,7 +138,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
         .frame(
             Frame::none()
                 .fill(style::SIDEBAR_BG)
-                .inner_margin(Margin::symmetric(16.0, 12.0)),
+                .inner_margin(Margin::symmetric(16, 12)),
         )
         .show(ctx, |ui| {
             ui.vertical(|ui| {
@@ -160,7 +160,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                             RichText::new("✉ Compose").color(Color32::WHITE).size(14.0),
                         )
                         .fill(style::ACCENT)
-                        .rounding(8.0),
+                        .corner_radius(8),
                     )
                     .clicked()
                 {
@@ -238,7 +238,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                                 .size(10.0)
                                 .color(style::TEXT_MUTED),
                         );
-                        egui::ComboBox::from_id_source("sidebar_account_selector")
+                        egui::ComboBox::from_id_salt("sidebar_account_selector")
                             .selected_text(get_account_display_text(app))
                             .width(ui.available_width() - 8.0)
                             .show_ui(ui, |ui| {

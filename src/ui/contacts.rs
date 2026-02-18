@@ -218,8 +218,8 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
         Frame::none()
             .fill(style::CARD_BG)
             .stroke(Stroke::new(1.0, style::CARD_STROKE))
-            .inner_margin(Margin::symmetric(16.0, 12.0))
-            .rounding(8.0)
+            .inner_margin(Margin::symmetric(16, 12))
+            .corner_radius(8)
             .show(ui, |ui| {
                 ui.label(RichText::new("Add New Contact").strong());
                 ui.add_space(4.0);
@@ -337,8 +337,8 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                 Frame::none()
                     .fill(style::CARD_BG)
                     .stroke(Stroke::new(1.0, style::CARD_STROKE))
-                    .inner_margin(Margin::symmetric(16.0, 12.0))
-                    .rounding(8.0)
+                    .inner_margin(Margin::symmetric(16, 12))
+                    .corner_radius(8)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             draw_contact_avatar(&app.contacts_manager, ui, &contact);
@@ -482,8 +482,8 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                 Frame::none()
                     .fill(style::CARD_BG)
                     .stroke(Stroke::new(1.0, style::CARD_STROKE))
-                    .inner_margin(Margin::symmetric(16.0, 8.0))
-                    .rounding(8.0)
+                    .inner_margin(Margin::symmetric(16, 8))
+                    .corner_radius(8)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             let label = display_name

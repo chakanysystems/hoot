@@ -84,6 +84,8 @@ impl ComposeWindow {
 
                     ui.add_space(2.0);
 
+                    ui.add_space(2.0);
+
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Subject:").color(style::TEXT_MUTED));
                         ui.add_sized(
@@ -126,7 +128,7 @@ impl ComposeWindow {
                             .add(
                                 egui::Button::new(RichText::new("Send").color(Color32::WHITE))
                                     .fill(style::ACCENT)
-                                    .rounding(6.0),
+                                    .corner_radius(6),
                             )
                             .clicked()
                         {
@@ -186,7 +188,7 @@ impl ComposeWindow {
 
                         // Save Draft button
                         if ui
-                            .add(egui::Button::new(RichText::new("Save Draft")).rounding(6.0))
+                            .add(egui::Button::new(RichText::new("Save Draft")).corner_radius(6))
                             .clicked()
                         {
                             let parent_event_strings: Vec<String> =
@@ -220,7 +222,7 @@ impl ComposeWindow {
                             .unwrap_or_default();
 
                         ui.horizontal(|ui| {
-                            egui::ComboBox::from_id_source("account_selector")
+                            egui::ComboBox::from_id_salt("account_selector")
                                 .selected_text(selected_text)
                                 .show_ui(ui, |ui| {
                                     for (key, name) in &account_options {

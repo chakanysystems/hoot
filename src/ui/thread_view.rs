@@ -76,8 +76,8 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                         Frame::none()
                             .fill(style::ACCENT_LIGHT)
                             .stroke(Stroke::new(1.0, style::ACCENT))
-                            .inner_margin(Margin::symmetric(16.0, 12.0))
-                            .rounding(8.0)
+                            .inner_margin(Margin::symmetric(16, 12))
+                            .corner_radius(8)
                             .show(ui, |ui| {
                                 let name =
                                     app.resolve_name(pubkey).unwrap_or_else(|| pubkey.clone());
@@ -116,8 +116,8 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                         Frame::none()
                             .fill(style::ACCENT_LIGHT)
                             .stroke(Stroke::new(1.0, style::ACCENT))
-                            .inner_margin(Margin::symmetric(16.0, 12.0))
-                            .rounding(8.0)
+                            .inner_margin(Margin::symmetric(16, 12))
+                            .corner_radius(8)
                             .show(ui, |ui| {
                                 let name =
                                     app.resolve_name(pubkey).unwrap_or_else(|| pubkey.clone());
@@ -175,8 +175,8 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                 Frame::none()
                     .fill(style::CARD_BG)
                     .stroke(Stroke::new(1.0, style::CARD_STROKE))
-                    .inner_margin(Margin::same(16.0))
-                    .rounding(8.0)
+                    .inner_margin(Margin::same(16))
+                    .corner_radius(8)
                     .show(ui, |ui| {
                         if event_id.is_none() || author.is_none() {
                             ui.label(

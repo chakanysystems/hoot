@@ -15,7 +15,7 @@ pub struct UnlockDatabase;
 impl UnlockDatabase {
     pub fn ui(app: &mut Hoot, ui: &mut Ui) {
         egui::Frame::none()
-            .inner_margin(egui::Margin::same(20.0))
+            .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(80.0);

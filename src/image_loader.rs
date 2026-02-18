@@ -1,4 +1,4 @@
-use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
+use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions, Vec2};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
@@ -161,5 +161,9 @@ fn decode_image(bytes: &[u8]) -> Option<ColorImage> {
         })
         .collect::<Vec<_>>();
 
-    Some(ColorImage { size, pixels })
+    Some(ColorImage {
+        size,
+        pixels,
+        source_size: Vec2::new(size[0] as f32, size[1] as f32),
+    })
 }

@@ -50,7 +50,7 @@ pub struct OnboardingScreen;
 impl OnboardingScreen {
     pub fn ui(app: &mut Hoot, ui: &mut egui::Ui) {
         egui::Frame::none()
-            .inner_margin(egui::Margin::same(20.0))
+            .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(30.0);
@@ -331,8 +331,8 @@ impl OnboardingScreen {
     ) {
         egui::Frame::none()
             .fill(ui.visuals().faint_bg_color)
-            .inner_margin(egui::Margin::same(15.0))
-            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::same(15))
+            .corner_radius(8)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new(title).size(16.0).strong());
