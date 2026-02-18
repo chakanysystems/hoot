@@ -112,9 +112,7 @@
                   xorg.libXi
                 ]
                 ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-                  darwin.apple_sdk.frameworks.AppKit
-                  darwin.apple_sdk.frameworks.CoreGraphics
-                  darwin.apple_sdk.frameworks.Foundation
+                  apple-sdk_15
                 ];
             };
 
@@ -184,7 +182,7 @@
             packages = rec {
               devenv-up = config.devShells.default.config.procfileScript;
               devenv-test = config.devShells.default.config.test;
-              default = nixgl-wrapper;
+              default = if pkgs.stdenv.isLinux then nixgl-wrapper else hoot;
               hoot-unwrapped = hoot;
             };
 
@@ -192,7 +190,7 @@
 
             apps.default = {
               type = "app";
-              program = "${nixgl-wrapper}/bin/hoot-nixgl";
+              program = if pkgs.stdenv.isLinux then "${nixgl-wrapper}/bin/hoot-nixgl" else "${hoot}/bin/hoot";
             };
 
             devShells.default = devenv.lib.mkShell {
