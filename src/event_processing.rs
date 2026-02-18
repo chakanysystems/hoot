@@ -1,3 +1,4 @@
+use crate::account_manager::AccountManager;
 use crate::mail_event::MAIL_EVENT_KIND;
 use crate::profile_metadata::{ProfileMetadata, ProfileOption};
 use crate::relay;
@@ -10,10 +11,10 @@ use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
 pub fn try_recv_relay_message(app: &mut Hoot) {
-    if let Some(raw) = app.relays.try_recv() {
-        info!("{:?}", &raw);
+    if let Some((relay_url, raw)) = app.relays.try_recv() {
+        info!("Message from {}: {:?}", relay_url, &raw);
         match relay::RelayMessage::from_json(&raw) {
-            Ok(v) => process_message(app, &v),
+            Ok(v) => process_message(app, &relay_url, &v),
             Err(e) => error!("could not decode message sent from relay: {}", e),
         }
     }
@@ -95,14 +96,84 @@ pub fn update_app(app: &mut Hoot, ctx: &egui::Context) {
     app.contacts_manager.process_image_queue(&ctx);
 }
 
-fn process_message(app: &mut Hoot, msg: &relay::RelayMessage) {
+fn perform_auth(app: &mut Hoot, relay_url: &str) {
+    let challenge = match app.relays.get_challenge(relay_url) {
+        Some(c) => c,
+        None => {
+            warn!("No challenge available for relay {}", relay_url);
+            return;
+        }
+    };
+
+    for keys in &app.account_manager.loaded_keys {
+        let pubkey = keys.public_key().to_hex();
+        if app.relays.is_key_authenticated(relay_url, &pubkey) {
+            debug!("Key {} already authenticated on {}", pubkey, relay_url);
+            continue;
+        }
+        match AccountManager::create_auth_event(keys, relay_url, &challenge) {
+            Ok(event) => {
+                if let Err(e) = app.relays.send_auth(relay_url, event) {
+                    error!("Failed to send AUTH for {}: {}", pubkey, e);
+                } else {
+                    info!("Sent AUTH for {} to {}", pubkey, relay_url);
+                    app.relays.add_authenticated_key(relay_url, pubkey);
+                }
+            }
+            Err(e) => {
+                error!("Failed to create auth event: {}", e);
+            }
+        }
+    }
+}
+
+fn process_message(app: &mut Hoot, relay_url: &str, msg: &relay::RelayMessage) {
     use relay::RelayMessage::*;
     match msg {
         Event(sub_id, event) => process_event(app, sub_id, event),
         Notice(msg) => debug!("Relay notice: {}", msg),
-        OK(result) => debug!("Command result: {:?}", result),
+        OK(result) => {
+            debug!("Command result: {:?}", result);
+            if result.message.starts_with("auth-required:") {
+                info!("Auth required for relay {}", relay_url);
+                perform_auth(app, relay_url);
+            } else if result.status {
+                // Auth succeeded (or event was accepted), retry pending subscriptions
+                let pending = app.relays.take_pending_auth_subscriptions(relay_url);
+                if !pending.is_empty() {
+                    info!(
+                        "Retrying {} subscriptions after auth success",
+                        pending.len()
+                    );
+                    for sub_id in pending {
+                        if let Err(e) = app.relays.send_subscription_to_relay(relay_url, &sub_id) {
+                            error!("Failed to retry subscription {}: {}", sub_id, e);
+                        } else {
+                            info!("Retried subscription {} to {}", sub_id, relay_url);
+                        }
+                    }
+                }
+            }
+        }
         Eose(sub_id) => debug!("End of stored events for subscription {}", sub_id),
-        Closed(sub_id, msg) => debug!("Subscription {} closed: {}", sub_id, msg),
+        Closed(sub_id, msg) => {
+            debug!("Subscription {} closed: {}", sub_id, msg);
+            if msg.starts_with("auth-required:") {
+                info!(
+                    "Auth required for relay {} - tracking subscription {} for retry",
+                    relay_url, sub_id
+                );
+                app.relays
+                    .track_pending_auth_subscription(relay_url, sub_id);
+                perform_auth(app, relay_url);
+            }
+        }
+        Auth(challenge) => {
+            debug!("Received AUTH challenge from {}: {}", relay_url, challenge);
+            if let Some(relay) = app.relays.relays.get_mut(relay_url) {
+                relay.auth_state.challenge = Some(challenge.to_string());
+            }
+        }
     }
 }
 

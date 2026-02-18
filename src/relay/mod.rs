@@ -1,5 +1,6 @@
 use crate::error::{Error, Result};
 use ewebsock::{WsEvent, WsMessage};
+use std::collections::HashSet;
 use tracing::{debug, error, info};
 
 mod pool;
@@ -18,11 +19,18 @@ pub enum RelayStatus {
     Disconnected,
 }
 
+#[derive(Default)]
+pub struct RelayAuthState {
+    pub challenge: Option<String>,
+    pub authenticated_keys: HashSet<String>,
+}
+
 pub struct Relay {
     pub url: String,
     reader: ewebsock::WsReceiver,
     writer: ewebsock::WsSender,
     pub status: RelayStatus,
+    pub auth_state: RelayAuthState,
 }
 
 impl Relay {
@@ -35,11 +43,12 @@ impl Relay {
             ewebsock::connect_with_wakeup(new_url.clone(), ewebsock::Options::default(), wake_up)
                 .unwrap();
 
-        let mut relay = Self {
+        let relay = Self {
             url: new_url,
             reader: reciever,
             writer: sender,
             status: RelayStatus::Connecting,
+            auth_state: RelayAuthState::default(),
         };
 
         relay
@@ -54,6 +63,7 @@ impl Relay {
 
         self.reader = reciever;
         self.writer = sender;
+        self.auth_state = RelayAuthState::default();
     }
 
     pub fn send(&mut self, message: WsMessage) -> Result<()> {

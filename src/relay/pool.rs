@@ -3,6 +3,7 @@ use crate::relay::message::ClientMessage;
 use crate::relay::Subscription;
 use crate::relay::{Relay, RelayStatus};
 use ewebsock::{WsEvent, WsMessage};
+use nostr::Event;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{debug, error};
@@ -14,6 +15,8 @@ pub struct RelayPool {
     pub subscriptions: HashMap<String, Subscription>,
     last_reconnect_attempt: Instant,
     last_ping: Instant,
+    // Track subscriptions that need auth retry per relay
+    pending_auth_subscriptions: HashMap<String, Vec<String>>, // relay_url -> list of subscription IDs
 }
 
 impl RelayPool {
@@ -23,6 +26,7 @@ impl RelayPool {
             subscriptions: HashMap::new(),
             last_reconnect_attempt: Instant::now(),
             last_ping: Instant::now(),
+            pending_auth_subscriptions: HashMap::new(),
         }
     }
 
@@ -89,40 +93,48 @@ impl RelayPool {
         self.relays.remove(url)
     }
 
-    pub fn try_recv(&mut self) -> Option<String> {
-        for relay in self.relays.values_mut() {
-            let relay_url = relay.url.clone();
-            if let Some(event) = relay.try_recv() {
-                use WsEvent::*;
-                match event {
-                    Message(message) => {
-                        return self.handle_message(relay_url, message);
-                    }
-                    Opened => {
-                        for sub in self.subscriptions.clone() {
-                            let client_message = ClientMessage::Req {
-                                subscription_id: sub.1.id,
-                                filters: sub.1.filters,
-                            };
-
-                            let payload = match serde_json::to_string(&client_message) {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    error!("could not turn subscription into json: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            match relay.send(ewebsock::WsMessage::Text(payload)) {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    error!("could not send subscription to {}: {:?}", relay.url, e)
-                                }
-                            };
+    pub fn try_recv(&mut self) -> Option<(String, String)> {
+        let relay_urls: Vec<String> = self.relays.keys().cloned().collect();
+        for relay_url in relay_urls {
+            if let Some(relay) = self.relays.get_mut(&relay_url) {
+                if let Some(event) = relay.try_recv() {
+                    use WsEvent::*;
+                    match event {
+                        Message(message) => {
+                            if let Some(msg_text) = self.handle_message(relay_url.clone(), message)
+                            {
+                                return Some((relay_url, msg_text));
+                            }
                         }
-                    }
-                    _ => {
-                        // we only want to know when the connection opens
+                        Opened => {
+                            for sub in self.subscriptions.clone() {
+                                let client_message = ClientMessage::Req {
+                                    subscription_id: sub.1.id,
+                                    filters: sub.1.filters,
+                                };
+
+                                let payload = match serde_json::to_string(&client_message) {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        error!("could not turn subscription into json: {}", e);
+                                        continue;
+                                    }
+                                };
+
+                                match relay.send(ewebsock::WsMessage::Text(payload)) {
+                                    Ok(_) => (),
+                                    Err(e) => {
+                                        error!(
+                                            "could not send subscription to {}: {:?}",
+                                            relay.url, e
+                                        )
+                                    }
+                                };
+                            }
+                        }
+                        _ => {
+                            // we only want to know when the connection opens
+                        }
                     }
                 }
             }
@@ -173,6 +185,66 @@ impl RelayPool {
     pub fn ping_all(&mut self) -> Result<()> {
         for relay in self.relays.values_mut() {
             relay.ping();
+        }
+        Ok(())
+    }
+
+    pub fn send_auth(&mut self, relay_url: &str, event: Event) -> Result<()> {
+        if let Some(relay) = self.relays.get_mut(relay_url) {
+            let client_message = ClientMessage::Auth { event };
+            let payload = serde_json::to_string(&client_message)?;
+            relay.send(ewebsock::WsMessage::Text(payload))?;
+        }
+        Ok(())
+    }
+
+    pub fn get_challenge(&self, relay_url: &str) -> Option<String> {
+        self.relays
+            .get(relay_url)
+            .and_then(|relay| relay.auth_state.challenge.clone())
+    }
+
+    pub fn add_authenticated_key(&mut self, relay_url: &str, pubkey: String) {
+        if let Some(relay) = self.relays.get_mut(relay_url) {
+            relay.auth_state.authenticated_keys.insert(pubkey);
+        }
+    }
+
+    pub fn is_key_authenticated(&self, relay_url: &str, pubkey: &str) -> bool {
+        self.relays
+            .get(relay_url)
+            .map(|relay| relay.auth_state.authenticated_keys.contains(pubkey))
+            .unwrap_or(false)
+    }
+
+    /// Track a subscription that failed due to auth-required so we can retry after auth
+    pub fn track_pending_auth_subscription(&mut self, relay_url: &str, subscription_id: &str) {
+        self.pending_auth_subscriptions
+            .entry(relay_url.to_string())
+            .or_default()
+            .push(subscription_id.to_string());
+    }
+
+    /// Get and clear pending subscriptions for a relay (call after successful auth)
+    pub fn take_pending_auth_subscriptions(&mut self, relay_url: &str) -> Vec<String> {
+        self.pending_auth_subscriptions
+            .remove(relay_url)
+            .unwrap_or_default()
+    }
+
+    /// Send a specific subscription to a specific relay
+    pub fn send_subscription_to_relay(&mut self, relay_url: &str, sub_id: &str) -> Result<()> {
+        if let Some(sub) = self.subscriptions.get(sub_id) {
+            if let Some(relay) = self.relays.get_mut(relay_url) {
+                if relay.status == RelayStatus::Connected {
+                    let client_message = ClientMessage::Req {
+                        subscription_id: sub_id.to_string(),
+                        filters: sub.filters.clone(),
+                    };
+                    let payload = serde_json::to_string(&client_message)?;
+                    relay.send(ewebsock::WsMessage::Text(payload))?;
+                }
+            }
         }
         Ok(())
     }

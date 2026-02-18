@@ -3,7 +3,7 @@ use crate::STORAGE_NAME;
 use anyhow::{Context, Result};
 use keyring::Entry;
 use nostr::nips::nip59::UnwrappedGift;
-use nostr::{Event, Keys, SecretKey};
+use nostr::{Event, EventBuilder, Keys, SecretKey};
 use pollster::FutureExt as _;
 use tracing::{debug, error};
 
@@ -148,6 +148,19 @@ impl AccountManager {
 
         Ok(())
     }
+
+    pub fn create_auth_event(keys: &Keys, relay_url: &str, challenge: &str) -> Result<Event> {
+        use nostr::RelayUrl;
+
+        let relay_url_parsed =
+            RelayUrl::parse(relay_url).map_err(|e| anyhow::anyhow!("Invalid relay URL: {}", e))?;
+
+        let event = EventBuilder::auth(challenge, relay_url_parsed)
+            .sign_with_keys(keys)
+            .map_err(|e| anyhow::anyhow!("Failed to sign auth event: {}", e))?;
+
+        Ok(event)
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +169,7 @@ mod tests {
     use keyring::credential::{
         Credential, CredentialApi, CredentialBuilderApi, CredentialPersistence,
     };
+    use nostr::{Keys, Kind, TagKind};
     use std::collections::HashMap;
     use std::sync::{LazyLock, Mutex};
 
@@ -283,6 +297,39 @@ mod tests {
 
         let db_keys = db.get_pubkeys()?;
         assert!(db_keys.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_auth_event() -> Result<()> {
+        let keys = Keys::generate();
+        let relay_url = "wss://relay.example.com";
+        let challenge = "test-challenge-123";
+
+        let event = AccountManager::create_auth_event(&keys, relay_url, challenge)?;
+
+        // Verify event properties
+        assert_eq!(event.kind, Kind::Authentication);
+        assert_eq!(event.content, "");
+
+        // Verify the event has relay and challenge tags
+        let has_relay_tag = event.tags.iter().any(|tag| {
+            tag.kind() == TagKind::Relay && tag.content().map(|c| c == relay_url).unwrap_or(false)
+        });
+        let has_challenge_tag = event.tags.iter().any(|tag| {
+            tag.kind() == TagKind::Challenge
+                && tag.content().map(|c| c == challenge).unwrap_or(false)
+        });
+
+        assert!(has_relay_tag, "Auth event should have relay tag");
+        assert!(has_challenge_tag, "Auth event should have challenge tag");
+
+        // Verify signature is valid
+        assert!(
+            event.verify().is_ok(),
+            "Auth event signature should be valid"
+        );
 
         Ok(())
     }
