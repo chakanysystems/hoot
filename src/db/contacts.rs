@@ -161,11 +161,13 @@ impl Db {
     /// Returns true if `created_at` is newer than what is saved, and false if they are the same or older
     /// Note to self/TODO: Look into forking the nostr crate to convert time stamps to i64.
     fn pmeta_is_newer(&self, pubkey: nostr::PublicKey, created_at: u64) -> Result<bool> {
-        self.connection
-            .execute(
-                "SELECT EXISTS (SELECT 1 FROM profile_metadata WHERE pubkey = $1 AND created_at <= $2) AS wow;",
-                (pubkey.to_string(), created_at)
-            )?;
-        Ok(true)
+        let exists: bool = self.connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM profile_metadata WHERE pubkey = ?1 AND created_at > ?2)",
+            (pubkey.to_string(), created_at),
+            |row| row.get(0),
+        )?;
+        // If there's a newer record (exists = true), return false (don't update)
+        // If no newer record (exists = false), return true (do update)
+        Ok(!exists)
     }
 }
