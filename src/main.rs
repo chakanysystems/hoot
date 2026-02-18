@@ -182,7 +182,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
 
                 // Navigation items
                 let nav_items: Vec<(&str, Page, usize)> = vec![
-                    ("📥 Inbox", Page::Inbox, app.events.len()),
+                    ("📥 Inbox", Page::Inbox, app.table_entries.len()),
                     ("📝 Drafts", Page::Drafts, app.drafts.len()),
                     ("⭐ Starred", Page::Starred, 0),
                     ("📁 Archived", Page::Archived, 0),

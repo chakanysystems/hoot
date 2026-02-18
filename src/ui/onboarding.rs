@@ -118,17 +118,17 @@ impl OnboardingScreen {
             app.page = Page::OnboardingNewUser;
             app.state.onboarding = OnboardingState::default();
         }
-        ui.add_space(10.0);
-        if ui
-            .add_sized(
-                [w, 45.0],
-                egui::Button::new(egui::RichText::new("I have an existing account").size(15.0)),
-            )
-            .clicked()
-        {
-            app.page = Page::OnboardingReturning;
-            app.state.onboarding = OnboardingState::default();
-        }
+        // ui.add_space(10.0);
+        // if ui
+        //     .add_sized(
+        //         [w, 45.0],
+        //         egui::Button::new(egui::RichText::new("I have an existing account").size(15.0)),
+        //     )
+        //     .clicked()
+        // {
+        //     app.page = Page::OnboardingReturning;
+        //     app.state.onboarding = OnboardingState::default();
+        // }
     }
 
     // ── Page: New user flow (multi-step) ────────────────────────────────
