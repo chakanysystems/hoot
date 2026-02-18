@@ -104,7 +104,6 @@ impl AccountManager {
                 }
             };
 
-            debug!("key: {:?}", privkey.to_ascii_lowercase());
             let parsed_sk = match SecretKey::from_slice(&privkey) {
                 Ok(key) => key,
                 Err(e) => {
