@@ -61,15 +61,15 @@ fn main() -> Result<(), eframe::Error> {
 
 pub struct Hoot {
     pub page: Page,
-    focused_post: String,
-    show_trashed_post: bool,
+    pub focused_post: String,
+    pub show_trashed_post: bool,
     status: HootStatus,
     state: HootState,
     relays: relay::RelayPool,
     events: Vec<nostr::Event>,
     account_manager: account_manager::AccountManager,
     pub active_account: Option<nostr::Keys>,
-    db: db::Db,
+    pub db: db::Db,
     table_entries: Vec<TableEntry>,
     trash_entries: Vec<TableEntry>,
     request_entries: Vec<TableEntry>,
@@ -300,6 +300,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         app.state.compose_window.remove(&id);
     }
 
+    // Sidebar first so it fills full height
     match app.page {
         Page::Unlock => {}
         Page::Onboarding
@@ -307,6 +308,16 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         | Page::OnboardingNewShowKey
         | Page::OnboardingReturning => {}
         _ => render_left_panel(app, ctx),
+    }
+
+    // Search bar after sidebar so it only spans the remaining width
+    match app.page {
+        Page::Unlock
+        | Page::Onboarding
+        | Page::OnboardingNewUser
+        | Page::OnboardingNewShowKey
+        | Page::OnboardingReturning => {}
+        _ => ui::search::render_global_search_bar(app, ctx),
     }
 
     egui::CentralPanel::default().show(ctx, |ui| match app.page {
@@ -318,6 +329,7 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         Page::Junk => ui::junk::render(app, ui),
         Page::Contacts => ui::contacts::render_contacts_page(app, ui),
         Page::Settings => ui::settings::SettingsScreen::ui(app, ui),
+        Page::SearchResults => ui::search::render_search_results(app, ui),
         Page::Unlock => ui::unlock_database::UnlockDatabase::ui(app, ui),
         Page::Onboarding
         | Page::OnboardingNewUser

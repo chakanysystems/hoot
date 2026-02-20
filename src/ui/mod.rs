@@ -7,6 +7,7 @@ pub mod inbox;
 pub mod junk;
 pub mod onboarding;
 pub mod requests;
+pub mod search;
 pub mod settings;
 pub mod thread_view;
 pub mod trash;

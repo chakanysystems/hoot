@@ -388,4 +388,68 @@ ORDER BY le.created_at DESC
             sender_nip05,
         })
     }
+
+    pub fn search_messages(&self, query: &str) -> Result<Vec<TableEntry>> {
+        let search_pattern = format!("%{}%", query.to_lowercase());
+        tracing::debug!("search_messages called with pattern: '{}'", search_pattern);
+
+        // Search only mail events (kind 2024), excluding trash and junk
+        let mail_kind = u32::from(MAIL_EVENT_KIND);
+        let mut stmt = self.connection.prepare(
+            "SELECT DISTINCT
+                e.id,
+                e.content,
+                e.created_at,
+                e.pubkey,
+                COALESCE((SELECT jsonb_extract(stag.value, '$[1]')
+                 FROM json_each(e.tags) AS stag
+                 WHERE jsonb_extract(stag.value, '$[0]') = 'subject' LIMIT 1), '') as subject,
+                1 as thread_count
+            FROM events e
+            LEFT JOIN profile_metadata pm ON e.pubkey = pm.pubkey
+            WHERE e.kind = ?2
+            AND NOT EXISTS (SELECT 1 FROM deleted_events d WHERE d.event_id = e.id)
+            AND NOT EXISTS (SELECT 1 FROM trash_events t WHERE t.event_id = e.id)
+            AND NOT EXISTS (
+                SELECT 1 FROM sender_status ss
+                WHERE ss.pubkey = e.pubkey
+                AND ss.status = 'junked'
+            )
+            -- Only show messages from contacts, allowed senders, or your accounts
+            AND (
+                e.pubkey IN (SELECT pubkey FROM contacts)
+                OR e.pubkey IN (SELECT pubkey FROM sender_status WHERE status = 'allowed')
+                OR e.pubkey IN (SELECT pubkey FROM pubkeys)
+            )
+            AND (
+                LOWER(e.content) LIKE LOWER(?1)
+                OR EXISTS (
+                    SELECT 1 FROM json_each(e.tags) AS stag
+                    WHERE jsonb_extract(stag.value, '$[0]') = 'subject'
+                    AND LOWER(jsonb_extract(stag.value, '$[1]')) LIKE LOWER(?1)
+                )
+                OR LOWER(pm.name) LIKE LOWER(?1)
+                OR LOWER(pm.display_name) LIKE LOWER(?1)
+            )
+            ORDER BY e.created_at DESC
+            LIMIT 100",
+        )?;
+
+        let params = rusqlite::params![&search_pattern, mail_kind];
+
+        let entries: Vec<TableEntry> = stmt
+            .query_map(params, |row| {
+                Ok(TableEntry {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    created_at: row.get(2)?,
+                    pubkey: row.get(3)?,
+                    subject: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    thread_count: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(entries)
+    }
 }

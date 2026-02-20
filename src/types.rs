@@ -1,6 +1,7 @@
 use crate::ui;
 use eframe::egui;
 use std::collections::HashMap;
+use std::time::Instant;
 
 // WE PROBABLY SHOULDN'T MAKE EVERYTHING A STRING, GRR!
 #[derive(Clone, Debug)]
@@ -31,6 +32,7 @@ pub enum Page {
     Post,
     Contacts,
     Unlock,
+    SearchResults,
 }
 
 // for storing the state of different components and such.
@@ -43,6 +45,7 @@ pub struct HootState {
     pub unlock_database: ui::unlock_database::UnlockDatabaseState,
     pub contacts: ContactsPageState,
     pub requests: RequestsPageState,
+    pub search: SearchState,
 }
 
 #[derive(Default)]
@@ -66,4 +69,39 @@ pub enum HootStatus {
     WaitingForUnlock,
     Initializing,
     Ready,
+}
+
+pub struct SearchState {
+    pub query: String,
+    pub last_executed_query: String,
+    pub results: Vec<TableEntry>,
+    pub last_query_time: Option<Instant>,
+    pub selected_suggestion: Option<usize>,
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            last_executed_query: String::new(),
+            results: Vec::new(),
+            last_query_time: None,
+            selected_suggestion: None,
+        }
+    }
+}
+
+impl SearchState {
+    /// Whether the suggestion dropdown should be shown.
+    pub fn has_suggestions(&self) -> bool {
+        !self.query.is_empty() && !self.results.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.query.clear();
+        self.last_executed_query.clear();
+        self.results.clear();
+        self.last_query_time = None;
+        self.selected_suggestion = None;
+    }
 }
