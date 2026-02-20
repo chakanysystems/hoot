@@ -210,23 +210,73 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                             .show(ui, |ui| {
                                 ui.label(RichText::new("From").color(style::TEXT_MUTED));
                                 let _ = get_profile_metadata(app, author_pk.clone());
-                                let from_label = app
+                                let author_name = app
                                     .resolve_name(&author_pk)
                                     .unwrap_or_else(|| author_pk.clone());
-                                ui.label(RichText::new(from_label).strong());
+
+                                // Check if the message has a NIP-05 tag
+                                if let Some(ref nip05) = ev.sender_nip05 {
+                                    // Show NIP-05 with verification status and name
+                                    let verification_status = if let Ok(Some(cached)) =
+                                        app.db.get_cached_nip05(&author_pk)
+                                    {
+                                        if cached.nip05 == *nip05 {
+                                            cached.status_display()
+                                        } else {
+                                            ("?", Color32::GRAY, "NIP-05 not yet verified")
+                                        }
+                                    } else {
+                                        ("?", Color32::GRAY, "NIP-05 not yet verified")
+                                    };
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&author_name).strong());
+                                        ui.colored_label(
+                                            verification_status.1,
+                                            verification_status.0,
+                                        )
+                                        .on_hover_text(verification_status.2);
+                                        ui.label(
+                                            RichText::new(format!("({})", nip05))
+                                                .color(style::TEXT_MUTED),
+                                        );
+                                    });
+                                } else {
+                                    // Fall back to just showing the name
+                                    ui.label(RichText::new(author_name).strong());
+                                }
                                 ui.end_row();
 
                                 ui.label(RichText::new("To").color(style::TEXT_MUTED));
-                                let to_labels: Vec<String> = ev
-                                    .to
-                                    .iter()
-                                    .map(|pk| {
+                                ui.horizontal_wrapped(|ui| {
+                                    for (i, pk) in ev.to.iter().enumerate() {
+                                        if i > 0 {
+                                            ui.label(", ");
+                                        }
                                         let pk_str = pk.to_string();
                                         let _ = get_profile_metadata(app, pk_str.clone());
-                                        app.resolve_name(&pk_str).unwrap_or(pk_str)
-                                    })
-                                    .collect();
-                                ui.label(to_labels.join(", "));
+                                        let recipient_name = app
+                                            .resolve_name(&pk_str)
+                                            .unwrap_or_else(|| pk_str.clone());
+
+                                        // Check for NIP-05
+                                        if let Ok(Some(nip05_entry)) =
+                                            app.db.get_cached_nip05(&pk_str)
+                                        {
+                                            let (icon, color, tooltip) =
+                                                nip05_entry.status_display();
+
+                                            ui.label(RichText::new(&recipient_name).strong());
+                                            ui.colored_label(color, icon).on_hover_text(tooltip);
+                                            ui.label(
+                                                RichText::new(format!("({})", nip05_entry.nip05))
+                                                    .color(style::TEXT_MUTED),
+                                            );
+                                        } else {
+                                            ui.label(RichText::new(recipient_name).strong());
+                                        }
+                                    }
+                                });
                                 ui.end_row();
                             });
 
@@ -276,8 +326,10 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                                     content: String::new(),
                                     parent_events,
                                     selected_account: None,
+                                    selected_nip05: None,
                                     minimized: false,
                                     draft_id: None,
+                                    send_status: None,
                                 };
                                 app.state
                                     .compose_window

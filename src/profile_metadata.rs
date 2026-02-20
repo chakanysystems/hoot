@@ -18,6 +18,7 @@ pub struct ProfileMetadata {
     pub name: Option<String>,
     pub display_name: Option<String>,
     pub picture: Option<String>,
+    pub nip05: Option<String>,
 }
 
 /// This is our own little option type just for checking if we have a profile's

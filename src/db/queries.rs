@@ -345,6 +345,7 @@ ORDER BY le.created_at DESC
         let mut to = Vec::new();
         let mut parent_events = Vec::new();
         let mut subject = String::new();
+        let mut sender_nip05 = None;
 
         for tag in parsed_event.tags {
             if tag.len() >= 2 {
@@ -361,6 +362,9 @@ ORDER BY le.created_at DESC
                     }
                     "subject" => {
                         subject = tag[1].clone();
+                    }
+                    "nip05" => {
+                        sender_nip05 = Some(tag[1].clone());
                     }
                     _ => {}
                 }
@@ -381,6 +385,7 @@ ORDER BY le.created_at DESC
             } else {
                 Some(parent_events)
             },
+            sender_nip05,
         })
     }
 }

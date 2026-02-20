@@ -123,8 +123,10 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                 content: draft.content,
                 parent_events,
                 selected_account,
+                selected_nip05: None,
                 minimized: false,
                 draft_id: Some(draft.id),
+                send_status: None,
             };
             app.state
                 .compose_window

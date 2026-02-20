@@ -12,6 +12,7 @@ use tracing::{debug, info};
 mod contacts;
 mod drafts;
 mod events;
+mod nip05;
 mod queries;
 pub mod sender_status;
 
@@ -23,7 +24,7 @@ static MIGRATIONS: LazyLock<Migrations<'static>> =
     LazyLock::new(|| Migrations::from_directory(&MIGRATIONS_DIR).unwrap());
 
 pub struct Db {
-    connection: Connection,
+    pub(crate) connection: Connection,
 }
 
 impl Db {

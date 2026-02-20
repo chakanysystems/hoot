@@ -27,10 +27,7 @@ pub fn key_already_exists(app: &Hoot, keys: &Keys) -> bool {
 
 /// Fetch existing metadata from relays/db and return the pre-filled values.
 /// Returns (display_name, name, picture_url, was_fetched).
-pub fn fetch_and_prefill_metadata(
-    app: &mut Hoot,
-    pubkey: &str,
-) -> (String, String, String, bool) {
+pub fn fetch_and_prefill_metadata(app: &mut Hoot, pubkey: &str) -> (String, String, String, bool) {
     match get_profile_metadata(app, pubkey.to_string()).clone() {
         ProfileOption::Some(meta) => {
             debug!("Pre-filled metadata for imported key");
@@ -69,10 +66,9 @@ pub fn save_account(
             display_name: non_empty(display_name),
             name: non_empty(name),
             picture: non_empty(picture_url),
+            nip05: None,
         };
-        if metadata.display_name.is_some()
-            || metadata.name.is_some()
-            || metadata.picture.is_some()
+        if metadata.display_name.is_some() || metadata.name.is_some() || metadata.picture.is_some()
         {
             match update_logged_in_profile_metadata(app, key.public_key(), metadata) {
                 Ok(_) => info!("Metadata published successfully"),

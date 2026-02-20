@@ -1,4 +1,5 @@
 use crate::mail_event::MailMessage;
+use crate::nip05::Nip05Resolution;
 use crate::relay::ClientMessage;
 use crate::style;
 use eframe::egui::{self, Color32, RichText};
@@ -12,8 +13,11 @@ pub struct ComposeWindowState {
     pub parent_events: Vec<EventId>,
     pub content: String,
     pub selected_account: Option<Keys>,
+    pub selected_nip05: Option<String>,
     pub minimized: bool,
     pub draft_id: Option<i64>,
+    /// Status message shown above the send button (e.g., resolution progress/errors)
+    pub send_status: Option<(String, Color32)>,
 }
 
 enum DraftAction {
@@ -78,7 +82,7 @@ impl ComposeWindow {
                         ui.add_sized(
                             [ui.available_width(), 24.0],
                             egui::TextEdit::singleline(&mut state.to_field)
-                                .hint_text("Recipient public key"),
+                                .hint_text("Recipient (npub, hex, or nip05 like user@domain.com)"),
                         );
                     });
 
@@ -136,12 +140,48 @@ impl ComposeWindow {
                                 error!("No Account Selected!");
                                 return;
                             }
-                            // convert to field into PublicKey object
                             let to_field = state.to_field.clone();
 
                             let mut recipient_keys: Vec<PublicKey> = Vec::new();
+                            let mut any_pending = false;
+                            let mut failed_nip05s: Vec<String> = Vec::new();
+
                             for key_string in to_field.split_whitespace() {
                                 use nostr::FromBech32;
+
+                                // Try to parse as NIP-05 identifier first
+                                if key_string.contains('@') {
+                                    match app.nip05_resolver.get(key_string) {
+                                        Some(Nip05Resolution::Resolved(pubkey_hex)) => {
+                                            match PublicKey::from_hex(pubkey_hex) {
+                                                Ok(k) => {
+                                                    recipient_keys.push(k);
+                                                    continue;
+                                                }
+                                                Err(e) => {
+                                                    debug!("could not parse resolved NIP-05 pubkey: {}", e);
+                                                    failed_nip05s.push(key_string.to_string());
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                        Some(Nip05Resolution::Pending) => {
+                                            any_pending = true;
+                                            continue;
+                                        }
+                                        Some(Nip05Resolution::Failed) => {
+                                            failed_nip05s.push(key_string.to_string());
+                                            continue;
+                                        }
+                                        None => {
+                                            // Not yet requested — enqueue and mark pending
+                                            app.nip05_resolver.request(key_string.to_string());
+                                            any_pending = true;
+                                            continue;
+                                        }
+                                    }
+                                }
+
                                 match PublicKey::from_bech32(key_string) {
                                     Ok(k) => recipient_keys.push(k),
                                     Err(e) => debug!("could not parse public key as bech32: {}", e),
@@ -153,6 +193,33 @@ impl ComposeWindow {
                                 };
                             }
 
+                            if !failed_nip05s.is_empty() {
+                                state.send_status = Some((
+                                    format!("Could not resolve: {}", failed_nip05s.join(", ")),
+                                    Color32::RED,
+                                ));
+                                return;
+                            }
+
+                            if any_pending {
+                                state.send_status = Some((
+                                    "Resolving NIP-05 addresses...".to_string(),
+                                    style::TEXT_MUTED,
+                                ));
+                                return;
+                            }
+
+                            if recipient_keys.is_empty() {
+                                state.send_status = Some((
+                                    "No valid recipients".to_string(),
+                                    Color32::RED,
+                                ));
+                                return;
+                            }
+
+                            // All recipients resolved — send
+                            state.send_status = None;
+
                             let mut msg = MailMessage {
                                 id: None,
                                 created_at: None,
@@ -163,6 +230,7 @@ impl ComposeWindow {
                                 parent_events: Some(state.parent_events.clone()),
                                 subject: state.subject.clone(),
                                 content: state.content.clone(),
+                                sender_nip05: state.selected_nip05.clone(),
                             };
                             let events_to_send =
                                 msg.to_events(&state.selected_account.clone().unwrap());
@@ -184,6 +252,11 @@ impl ComposeWindow {
                             if let Some(draft_id) = state.draft_id {
                                 draft_action = DraftAction::Delete(draft_id);
                             }
+                        }
+
+                        // Show send status message if any
+                        if let Some((ref msg, color)) = state.send_status {
+                            ui.label(RichText::new(msg).color(color).small());
                         }
 
                         // Save Draft button
@@ -226,11 +299,47 @@ impl ComposeWindow {
                                 .selected_text(selected_text)
                                 .show_ui(ui, |ui| {
                                     for (key, name) in &account_options {
-                                        ui.selectable_value(
-                                            &mut state.selected_account,
-                                            Some(key.clone()),
-                                            name,
-                                        );
+                                        let selected = state
+                                            .selected_account
+                                            .as_ref()
+                                            .map(|k| k.public_key() == key.public_key())
+                                            .unwrap_or(false);
+
+                                        // Show the key option (no NIP-05)
+                                        let display_text = format!("{} (raw key)", name);
+                                        if ui
+                                            .selectable_label(
+                                                selected && state.selected_nip05.is_none(),
+                                                &display_text,
+                                            )
+                                            .clicked()
+                                        {
+                                            state.selected_account = Some(key.clone());
+                                            state.selected_nip05 = None;
+                                        }
+
+                                        // Show NIP-05 options for this key (all NIP-05s, not just "own")
+                                        let pk_hex = key.public_key().to_hex();
+                                        if let Ok(nip05s) = app.db.get_nip05s_for_pubkey(&pk_hex) {
+                                            for nip05_entry in nip05s {
+                                                let nip05_selected = selected
+                                                    && state.selected_nip05.as_ref()
+                                                        == Some(&nip05_entry.nip05);
+                                                let (status_icon, _, _) =
+                                                    nip05_entry.status_display();
+                                                let display_text = format!(
+                                                    "{} {} ({})",
+                                                    status_icon, nip05_entry.nip05, name
+                                                );
+                                                if ui
+                                                    .selectable_label(nip05_selected, &display_text)
+                                                    .clicked()
+                                                {
+                                                    state.selected_account = Some(key.clone());
+                                                    state.selected_nip05 = Some(nip05_entry.nip05);
+                                                }
+                                            }
+                                        }
                                     }
                                 });
                             ui.label("Send as:");

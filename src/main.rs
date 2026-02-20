@@ -11,6 +11,7 @@ mod error;
 mod event_processing;
 mod image_loader;
 mod mail_event;
+mod nip05;
 mod profile_metadata;
 use profile_metadata::ProfileOption;
 mod relay;
@@ -43,7 +44,9 @@ fn main() -> Result<(), eframe::Error> {
             let mut fonts = FontDefinitions::default();
             fonts.font_data.insert(
                 "Inter".to_owned(),
-                std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/Inter.ttf"))),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../assets/Inter.ttf"
+                ))),
             );
             fonts
                 .families
@@ -74,6 +77,8 @@ pub struct Hoot {
     profile_metadata: HashMap<String, profile_metadata::ProfileOption>,
     pub contacts_manager: ContactsManager,
     drafts: Vec<db::Draft>,
+    nip05_verifier: nip05::Nip05Verifier,
+    nip05_resolver: nip05::Nip05Resolver,
 }
 
 fn get_account_display_text(app: &Hoot) -> String {
@@ -170,8 +175,10 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                         content: String::new(),
                         parent_events: Vec::new(),
                         selected_account: None,
+                        selected_nip05: None,
                         minimized: false,
                         draft_id: None,
+                        send_status: None,
                     };
                     app.state
                         .compose_window
@@ -375,6 +382,8 @@ impl Hoot {
             profile_metadata: HashMap::new(),
             contacts_manager: ContactsManager::new(),
             drafts: Vec::new(),
+            nip05_verifier: nip05::Nip05Verifier::new(),
+            nip05_resolver: nip05::Nip05Resolver::new(),
         }
     }
 

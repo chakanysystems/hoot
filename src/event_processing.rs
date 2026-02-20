@@ -10,6 +10,17 @@ use nostr::TagKind;
 use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
+/// Cache a NIP-05 identifier in the database and enqueue background verification.
+fn cache_and_verify_nip05(app: &mut Hoot, nip05: &str, pubkey_hex: &str, is_own: bool) {
+    if let Err(e) = app.db.add_nip05(pubkey_hex, nip05, is_own) {
+        warn!("Failed to cache NIP-05 {}: {}", nip05, e);
+        return;
+    }
+
+    app.nip05_verifier
+        .request(nip05.to_string(), pubkey_hex.to_string());
+}
+
 pub fn try_recv_relay_message(app: &mut Hoot) {
     if let Some((relay_url, raw)) = app.relays.try_recv() {
         info!("Message from {}: {:?}", relay_url, &raw);
@@ -94,6 +105,8 @@ pub fn update_app(app: &mut Hoot, ctx: &egui::Context) {
     app.relays.keepalive(wake_up);
     try_recv_relay_message(app);
     app.contacts_manager.process_image_queue(&ctx);
+    app.nip05_verifier.process_queue(&app.db);
+    app.nip05_resolver.process_queue();
 }
 
 fn perform_auth(app: &mut Hoot, relay_url: &str) {
@@ -324,6 +337,12 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
                 return;
             }
         };
+
+        // Trigger NIP-05 verification if present
+        if let Some(ref nip05) = deserialized_metadata.nip05 {
+            cache_and_verify_nip05(app, nip05, &event.pubkey.to_string(), false);
+        }
+
         app.profile_metadata.insert(
             event.pubkey.to_string(),
             ProfileOption::Some(deserialized_metadata.clone()),
@@ -407,6 +426,20 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
                     error!("Failed to store event in database: {}", e);
                 } else {
                     debug!("Successfully stored event with id {} in database", event.id);
+
+                    // Check for NIP-05 tag in the rumor and verify it
+                    if rumor.kind == Kind::Custom(MAIL_EVENT_KIND) {
+                        if let Some(nip05_tag) = rumor.tags.find(TagKind::custom("nip05")) {
+                            if let Some(nip05_value) = nip05_tag.content() {
+                                cache_and_verify_nip05(
+                                    app,
+                                    &nip05_value.to_string(),
+                                    &rumor.pubkey.to_string(),
+                                    false,
+                                );
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {

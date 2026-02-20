@@ -16,6 +16,8 @@ pub struct MailMessage {
     pub parent_events: Option<Vec<EventId>>,
     pub subject: String,
     pub content: String,
+    /// Optional NIP-05 identifier for the sender
+    pub sender_nip05: Option<String>,
 }
 
 impl MailMessage {
@@ -40,6 +42,11 @@ impl MailMessage {
             for event in parentEvents {
                 tags.push(Tag::event(*event));
             }
+        }
+
+        // Add NIP-05 tag if sender has one
+        if let Some(nip05) = &self.sender_nip05 {
+            tags.push(Tag::custom(TagKind::custom("nip05"), vec![nip05.as_str()]));
         }
 
         tags.push(Tag::from_standardized(TagStandard::Subject(

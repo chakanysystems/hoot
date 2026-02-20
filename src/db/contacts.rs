@@ -12,16 +12,17 @@ impl Db {
     // context: see profile_metadata sql definition and compare to events definition
 
     pub fn get_profile_metadata(&self, pubkey: &str) -> Result<Option<ProfileMetadata>> {
-        let mut stmt = self
-            .connection
-            .prepare("SELECT * FROM profile_metadata WHERE pubkey = ?")?;
+        let mut stmt = self.connection.prepare(
+            "SELECT name, display_name, picture, nip05 FROM profile_metadata WHERE pubkey = ?",
+        )?;
 
         Ok(stmt
             .query_one([pubkey], |row| {
                 Ok(ProfileMetadata {
-                    name: row.get(2)?,
-                    display_name: row.get(3)?,
-                    picture: row.get(4)?,
+                    name: row.get(0)?,
+                    display_name: row.get(1)?,
+                    picture: row.get(2)?,
+                    nip05: row.get(3)?,
                 })
             })
             .optional()?)
@@ -29,7 +30,7 @@ impl Db {
 
     pub fn get_contacts(&self) -> Result<Vec<(String, ProfileMetadata)>> {
         let mut stmt = self.connection.prepare(
-            "SELECT pubkey, name, display_name, picture
+            "SELECT pubkey, name, display_name, picture, nip05
              FROM profile_metadata
              ORDER BY LOWER(COALESCE(display_name, name, pubkey))",
         )?;
@@ -40,6 +41,7 @@ impl Db {
                 name: row.get(1)?,
                 display_name: row.get(2)?,
                 picture: row.get(3)?,
+                nip05: row.get(4)?,
             };
             Ok((pubkey, metadata))
         })?;
@@ -73,8 +75,8 @@ impl Db {
         let meta: nostr::Metadata = nostr::Metadata::from_json(event.content)?;
 
         self.connection
-            .execute("REPLACE INTO profile_metadata (pubkey, id, name, display_name, picture, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                (event.pubkey.to_string(), event.id.to_string(), meta.name, meta.display_name, meta.picture, event.created_at.as_u64())
+            .execute("REPLACE INTO profile_metadata (pubkey, id, name, display_name, picture, nip05, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (event.pubkey.to_string(), event.id.to_string(), meta.name, meta.display_name, meta.picture, meta.nip05, event.created_at.as_u64())
             )?;
         Ok(())
     }
@@ -119,7 +121,7 @@ impl Db {
     /// Returns (pubkey, petname, ProfileMetadata).
     pub fn get_user_contacts(&self) -> Result<Vec<(String, Option<String>, ProfileMetadata)>> {
         let mut stmt = self.connection.prepare(
-            "SELECT c.pubkey, c.petname, pm.name, pm.display_name, pm.picture
+            "SELECT c.pubkey, c.petname, pm.name, pm.display_name, pm.picture, pm.nip05
              FROM contacts c
              LEFT JOIN profile_metadata pm ON c.pubkey = pm.pubkey
              ORDER BY LOWER(COALESCE(c.petname, pm.display_name, pm.name, c.pubkey))",
@@ -132,6 +134,7 @@ impl Db {
                 name: row.get(2)?,
                 display_name: row.get(3)?,
                 picture: row.get(4)?,
+                nip05: row.get(5)?,
             };
             Ok((pubkey, petname, metadata))
         })?;
@@ -166,8 +169,7 @@ impl Db {
             (pubkey.to_string(), created_at),
             |row| row.get(0),
         )?;
-        // If there's a newer record (exists = true), return false (don't update)
-        // If no newer record (exists = false), return true (do update)
+        // If no record exists or the existing one is older, this is newer
         Ok(!exists)
     }
 }

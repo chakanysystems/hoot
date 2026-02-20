@@ -51,9 +51,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                     ui.label(RichText::new("From").small().color(style::TEXT_MUTED));
                 });
                 header.col(|ui| {
-                    ui.label(
-                        RichText::new("Subject").small().color(style::TEXT_MUTED),
-                    );
+                    ui.label(RichText::new("Subject").small().color(style::TEXT_MUTED));
                 });
                 header.col(|ui| {
                     ui.label(RichText::new("Date").small().color(style::TEXT_MUTED));
@@ -110,10 +108,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
             } else {
                 match app.db.get_top_level_messages() {
                     Ok(msgs) => app.table_entries = msgs,
-                    Err(e) => error!(
-                        "Could not fetch table entries to display from DB: {}",
-                        e
-                    ),
+                    Err(e) => error!("Could not fetch table entries to display from DB: {}", e),
                 }
                 app.refresh_trash();
             }

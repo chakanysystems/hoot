@@ -568,9 +568,7 @@ impl OnboardingScreen {
                 .clicked()
             {
                 let keypair = nostr::Keys::new(parsed.unwrap());
-                match super::account_setup::save_account(
-                    app, &keypair, "", "", "", false,
-                ) {
+                match super::account_setup::save_account(app, &keypair, "", "", "", false) {
                     Ok(()) => {
                         app.page = Page::Inbox;
                         Self::finish_onboarding(app);

@@ -70,7 +70,25 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                         let label = app
                             .resolve_name(&event.pubkey)
                             .unwrap_or_else(|| event.pubkey.to_string());
-                        ui.label(RichText::new(label).strong());
+                        
+                        // Check for NIP-05 and show warning if unverified
+                        let has_unverified_nip05 = if let Ok(Some(cached)) = app.db.get_cached_nip05(&event.pubkey) {
+                            cached.last_verified.is_none()
+                        } else if let Some(meta) = app.db.get_profile_metadata(&event.pubkey).unwrap_or(None) {
+                            meta.nip05.is_some()
+                        } else {
+                            false
+                        };
+                        
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(label).strong());
+                            if has_unverified_nip05 {
+                                ui.colored_label(
+                                    egui::Color32::YELLOW,
+                                    "⚠"
+                                ).on_hover_text("This sender has an unverified NIP-05 identifier. Proceed with caution.");
+                            }
+                        });
                     });
                     row.col(|ui| {
                         ui.label(&event.subject);

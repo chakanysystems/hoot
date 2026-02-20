@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
+use super::Db;
 use anyhow::Result;
 use nostr::nips::nip59::UnwrappedGift;
 use nostr::Event;
 use rusqlite::OptionalExtension;
 use serde_json::json;
-use super::Db;
 
 impl Db {
     pub fn get_pubkeys(&self) -> Result<Vec<String>> {
