@@ -201,7 +201,7 @@
                   {
                     packages = [
                       rustToolchain
-                    ];
+                    ] ++ commonArgs.buildInputs ++ commonArgs.nativeBuildInputs;
                   }
                 )
               ];
