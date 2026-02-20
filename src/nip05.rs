@@ -312,10 +312,6 @@ pub fn verify_nip05_for_pubkey(nip05: &str, expected_pubkey_hex: &str) -> Nip05V
         Ok(Some(fetched_pubkey)) => {
             let fetched_pubkey_lower = fetched_pubkey.to_lowercase();
             if fetched_pubkey_lower == expected_pubkey_lower {
-                debug!(
-                    "NIP-05 verification successful: {} -> {}",
-                    nip05, expected_pubkey_hex
-                );
                 Nip05VerificationStatus::Verified
             } else {
                 warn!(

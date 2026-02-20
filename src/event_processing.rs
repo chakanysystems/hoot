@@ -23,7 +23,6 @@ fn cache_and_verify_nip05(app: &mut Hoot, nip05: &str, pubkey_hex: &str, is_own:
 
 pub fn try_recv_relay_message(app: &mut Hoot) {
     if let Some((relay_url, raw)) = app.relays.try_recv() {
-        info!("Message from {}: {:?}", relay_url, &raw);
         match relay::RelayMessage::from_json(&raw) {
             Ok(v) => process_message(app, &relay_url, &v),
             Err(e) => error!("could not decode message sent from relay: {}", e),
@@ -297,7 +296,6 @@ fn process_event(app: &mut Hoot, _sub_id: &str, event_json: &str) {
         error!("Event verification failed for event: {}", event.id);
         return;
     }
-    debug!("Verified event: {:?}", event);
 
     if event.kind == Kind::EventDeletion {
         let event_ids: Vec<String> = event.tags.event_ids().map(|id| id.to_hex()).collect();
