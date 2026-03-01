@@ -1,5 +1,5 @@
-use eframe::egui::{self, Color32, CornerRadius, Frame, Layout, RichText, Stroke};
 use crate::style;
+use eframe::egui::{self, Color32, CornerRadius, Frame, Layout, RichText, Stroke};
 
 /// Renders a compact reply/compose box: textarea + footer with send button.
 /// Returns `true` if Send was clicked (caller should send and clear `content`).
@@ -40,12 +40,14 @@ pub fn render_reply_box(ui: &mut egui::Ui, content: &mut String) -> bool {
                 ui.add_space(4.0);
 
                 // Attach placeholder button
-                style::pointer(ui.add(
-                    egui::Button::new(RichText::new("📎").size(13.0).color(style::TEXT3))
-                        .fill(Color32::TRANSPARENT)
-                        .stroke(Stroke::NONE)
-                        .min_size(egui::vec2(28.0, 28.0)),
-                ));
+                style::pointer(
+                    ui.add(
+                        egui::Button::new(RichText::new("📎").size(13.0).color(style::TEXT3))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE)
+                            .min_size(egui::vec2(28.0, 28.0)),
+                    ),
+                );
 
                 // Encrypted status
                 ui.label(
@@ -57,14 +59,16 @@ pub fn render_reply_box(ui: &mut egui::Ui, content: &mut String) -> bool {
                 // Send button right-aligned
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(4.0);
-                    let btn = style::pointer(ui.add(
-                        egui::Button::new(
-                            RichText::new("Send").size(13.0).color(Color32::WHITE),
-                        )
-                        .fill(style::ACCENT)
-                        .corner_radius(CornerRadius::same(7))
-                        .min_size(egui::vec2(60.0, 30.0)),
-                    ));
+                    let btn = style::pointer(
+                        ui.add(
+                            egui::Button::new(
+                                RichText::new("Send").size(13.0).color(Color32::WHITE),
+                            )
+                            .fill(style::ACCENT)
+                            .corner_radius(CornerRadius::same(7))
+                            .min_size(egui::vec2(60.0, 30.0)),
+                        ),
+                    );
                     if btn.clicked() {
                         send_clicked = true;
                     }
