@@ -10,6 +10,7 @@ pub struct Draft {
     pub content: String,
     pub parent_events: Vec<String>,
     pub selected_account: Option<String>,
+    pub selected_nip05: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -22,17 +23,19 @@ impl Db {
         content: &str,
         parent_events: &[String],
         selected_account: Option<&str>,
+        selected_nip05: Option<&str>,
     ) -> Result<i64> {
         let parent_events_json = serde_json::to_string(parent_events)?;
         self.connection.execute(
-            "INSERT INTO drafts (subject, to_field, content, parent_events, selected_account)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO drafts (subject, to_field, content, parent_events, selected_account, selected_nip05)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             (
                 subject,
                 to_field,
                 content,
                 &parent_events_json,
                 selected_account,
+                selected_nip05,
             ),
         )?;
         Ok(self.connection.last_insert_rowid())
@@ -46,18 +49,20 @@ impl Db {
         content: &str,
         parent_events: &[String],
         selected_account: Option<&str>,
+        selected_nip05: Option<&str>,
     ) -> Result<()> {
         let parent_events_json = serde_json::to_string(parent_events)?;
         self.connection.execute(
             "UPDATE drafts SET subject = ?1, to_field = ?2, content = ?3,
-             parent_events = ?4, selected_account = ?5, updated_at = unixepoch()
-             WHERE id = ?6",
+             parent_events = ?4, selected_account = ?5, selected_nip05 = ?6, updated_at = unixepoch()
+             WHERE id = ?7",
             (
                 subject,
                 to_field,
                 content,
                 &parent_events_json,
                 selected_account,
+                selected_nip05,
                 id,
             ),
         )?;
@@ -66,7 +71,7 @@ impl Db {
 
     pub fn get_drafts(&self) -> Result<Vec<Draft>> {
         let mut stmt = self.connection.prepare(
-            "SELECT id, subject, to_field, content, parent_events, selected_account, created_at, updated_at
+            "SELECT id, subject, to_field, content, parent_events, selected_account, selected_nip05, created_at, updated_at
              FROM drafts ORDER BY updated_at DESC",
         )?;
 
@@ -82,8 +87,9 @@ impl Db {
                 content: row.get(3)?,
                 parent_events,
                 selected_account: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
+                selected_nip05: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
             })
         })?;
 

@@ -113,7 +113,9 @@ impl SettingsScreen {
                 let mut meta_state = key_meta_state.borrow_mut();
                 let is_editing = meta_state.editing;
                 let display_name = match &profile_metadata {
-                    ProfileOption::Some(meta) => meta.display_name.as_deref().or(meta.name.as_deref()),
+                    ProfileOption::Some(meta) => {
+                        meta.display_name.as_deref().or(meta.name.as_deref())
+                    }
                     ProfileOption::Waiting => None,
                 };
 
@@ -205,9 +207,9 @@ impl SettingsScreen {
                     }
                 }
                 if ui.button("Verify").clicked() {
-                    if let Err(e) = app
-                        .backend
-                        .add_nip05(pk_hex.to_string(), entry.nip05.clone(), entry.is_own)
+                    if let Err(e) =
+                        app.backend
+                            .add_nip05(pk_hex.to_string(), entry.nip05.clone(), entry.is_own)
                     {
                         error!("Failed to queue NIP-05 verification: {}", e);
                     }
@@ -243,9 +245,9 @@ impl SettingsScreen {
                 if !looks_like_nip05(&new_nip05_value) {
                     state.verification_error =
                         Some("Invalid NIP-05 format. Use: user@domain.com".to_string());
-                } else if let Err(e) = app
-                    .backend
-                    .add_nip05(pk_hex.to_string(), new_nip05_value.clone(), true)
+                } else if let Err(e) =
+                    app.backend
+                        .add_nip05(pk_hex.to_string(), new_nip05_value.clone(), true)
                 {
                     state.verification_error = Some(format!("Failed to save: {}", e));
                 } else {
@@ -284,7 +286,11 @@ impl SettingsScreen {
                             let size = Vec2::splat(12.0);
                             let (response, painter) = ui.allocate_painter(size, Sense::hover());
                             let rect = response.rect;
-                            painter.circle_filled(rect.center(), rect.width() / 2.0 - 1.0, conn_fill);
+                            painter.circle_filled(
+                                rect.center(),
+                                rect.width() / 2.0 - 1.0,
+                                conn_fill,
+                            );
                             ui.label(relay.url.clone());
                             ui.small(format!("{:?}", relay.status));
                             if ui.button("Remove Relay").clicked() {

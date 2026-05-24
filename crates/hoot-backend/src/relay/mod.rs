@@ -39,12 +39,9 @@ impl Relay {
         wake_up: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self> {
         let new_url: String = url.into();
-        let (sender, reciever) = ewebsock::connect_with_wakeup(
-            new_url.clone(),
-            ewebsock::Options::default(),
-            wake_up,
-        )
-        .map_err(|err| Error::Generic(format!("{:?}", err)))?;
+        let (sender, reciever) =
+            ewebsock::connect_with_wakeup(new_url.clone(), ewebsock::Options::default(), wake_up)
+                .map_err(|err| Error::Generic(format!("{:?}", err)))?;
         let relay = Self {
             url: new_url,
             reader: reciever,
@@ -59,12 +56,9 @@ impl Relay {
     // TODO: investigate whether this can cause a message to be dropped due to the writer being
     // overwritten
     pub fn reconnect(&mut self, wake_up: impl Fn() + Send + Sync + 'static) -> Result<()> {
-        let (sender, reciever) = ewebsock::connect_with_wakeup(
-            self.url.clone(),
-            ewebsock::Options::default(),
-            wake_up,
-        )
-        .map_err(|err| Error::Generic(format!("{:?}", err)))?;
+        let (sender, reciever) =
+            ewebsock::connect_with_wakeup(self.url.clone(), ewebsock::Options::default(), wake_up)
+                .map_err(|err| Error::Generic(format!("{:?}", err)))?;
 
         self.reader = reciever;
         self.writer = sender;

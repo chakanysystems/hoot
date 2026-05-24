@@ -190,10 +190,12 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                             Some(petname_raw)
                         };
                         if app.contacts_manager.find_contact(&pubkey).is_some() {
-                            app.state.contacts.add_error = Some("Contact already exists.".to_string());
+                            app.state.contacts.add_error =
+                                Some("Contact already exists.".to_string());
                         } else if let Err(e) = app.backend.save_contact(pubkey.clone(), petname) {
                             error!("Failed to add contact: {}", e);
-                            app.state.contacts.add_error = Some("Failed to add contact.".to_string());
+                            app.state.contacts.add_error =
+                                Some("Failed to add contact.".to_string());
                         } else {
                             app.refresh_contacts();
                             app.state.contacts.add_pubkey_input.clear();
@@ -228,7 +230,8 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
             for index in 0..total {
                 let contact = app.contacts_manager.get_contacts()[index].clone();
                 app.contacts_manager.ensure_contact_images_loaded();
-                let is_editing = app.state.contacts.editing_pubkey.as_ref() == Some(&contact.pubkey);
+                let is_editing =
+                    app.state.contacts.editing_pubkey.as_ref() == Some(&contact.pubkey);
                 Frame::none()
                     .fill(style::CARD_BG)
                     .stroke(Stroke::new(1.0, style::CARD_STROKE))
@@ -242,11 +245,23 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                                 if is_editing {
                                     ui.horizontal(|ui| {
                                         ui.label("Petname:");
-                                        ui.text_edit_singleline(&mut app.state.contacts.editing_petname_buf);
+                                        ui.text_edit_singleline(
+                                            &mut app.state.contacts.editing_petname_buf,
+                                        );
                                         if ui.button("Save").clicked() {
-                                            let new_petname = app.state.contacts.editing_petname_buf.trim().to_string();
-                                            let petname = if new_petname.is_empty() { None } else { Some(new_petname) };
-                                            petname_to_save = Some((contact.pubkey.clone(), petname));
+                                            let new_petname = app
+                                                .state
+                                                .contacts
+                                                .editing_petname_buf
+                                                .trim()
+                                                .to_string();
+                                            let petname = if new_petname.is_empty() {
+                                                None
+                                            } else {
+                                                Some(new_petname)
+                                            };
+                                            petname_to_save =
+                                                Some((contact.pubkey.clone(), petname));
                                             app.state.contacts.editing_pubkey = None;
                                         }
                                         if ui.button("Cancel").clicked() {
@@ -255,19 +270,32 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                                     });
                                 } else {
                                     ui.label(RichText::new(contact.display_name()).strong());
-                                    ui.label(RichText::new(&contact.pubkey).monospace().small().color(style::TEXT_MUTED));
+                                    ui.label(
+                                        RichText::new(&contact.pubkey)
+                                            .monospace()
+                                            .small()
+                                            .color(style::TEXT_MUTED),
+                                    );
                                 }
                             });
                             if !is_editing {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button(RichText::new("X").color(Color32::RED)).clicked() {
-                                        contact_to_remove = Some(contact.pubkey.clone());
-                                    }
-                                    if ui.button("Edit").clicked() {
-                                        app.state.contacts.editing_pubkey = Some(contact.pubkey.clone());
-                                        app.state.contacts.editing_petname_buf = contact.petname.clone().unwrap_or_default();
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .button(RichText::new("X").color(Color32::RED))
+                                            .clicked()
+                                        {
+                                            contact_to_remove = Some(contact.pubkey.clone());
+                                        }
+                                        if ui.button("Edit").clicked() {
+                                            app.state.contacts.editing_pubkey =
+                                                Some(contact.pubkey.clone());
+                                            app.state.contacts.editing_petname_buf =
+                                                contact.petname.clone().unwrap_or_default();
+                                        }
+                                    },
+                                );
                             }
                         });
                     });

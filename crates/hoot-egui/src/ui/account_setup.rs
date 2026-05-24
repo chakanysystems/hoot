@@ -1,4 +1,6 @@
-use crate::profile_metadata::{get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption};
+use crate::profile_metadata::{
+    get_profile_metadata, update_logged_in_profile_metadata, ProfileMetadata, ProfileOption,
+};
 use crate::Hoot;
 use hoot_backend::AccountSummary;
 use tracing::{debug, info, warn};
@@ -51,7 +53,14 @@ pub fn save_imported_account(
         .backend
         .import_account(nsec.to_string())
         .map_err(|e| format!("Failed to save key: {}", e))?;
-    finish_saved_account(app, account, display_name, name, picture_url, publish_metadata)
+    finish_saved_account(
+        app,
+        account,
+        display_name,
+        name,
+        picture_url,
+        publish_metadata,
+    )
 }
 
 pub fn generate_account(
@@ -65,7 +74,14 @@ pub fn generate_account(
         .backend
         .generate_account()
         .map_err(|e| format!("Failed to generate key: {}", e))?;
-    finish_saved_account(app, account, display_name, name, picture_url, publish_metadata)
+    finish_saved_account(
+        app,
+        account,
+        display_name,
+        name,
+        picture_url,
+        publish_metadata,
+    )
 }
 
 fn finish_saved_account(

@@ -8,9 +8,9 @@ use hoot_backend::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, Level};
 #[cfg(feature = "profiling")]
 use tracing::debug;
+use tracing::{error, info, Level};
 
 mod image_loader;
 mod profile_metadata;
@@ -31,7 +31,9 @@ fn main() -> Result<(), eframe::Error> {
     start_puffin_server();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 600.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1024.0, 600.0])
+            .with_transparent(false),
         ..Default::default()
     };
 
@@ -42,6 +44,12 @@ fn main() -> Result<(), eframe::Error> {
             style::apply_theme(&cc.egui_ctx);
             let mut fonts = FontDefinitions::default();
             fonts.font_data.insert(
+                "InstrumentSans".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../assets/InstrumentSans-VariableFont_wdth,wght.ttf"
+                ))),
+            );
+            fonts.font_data.insert(
                 "Inter".to_owned(),
                 std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
                     "../assets/Inter.ttf"
@@ -51,7 +59,12 @@ fn main() -> Result<(), eframe::Error> {
                 .families
                 .get_mut(&Proportional)
                 .unwrap()
-                .insert(0, "Inter".to_owned());
+                .insert(0, "InstrumentSans".to_owned());
+            fonts
+                .families
+                .get_mut(&Proportional)
+                .unwrap()
+                .insert(1, "Inter".to_owned());
             cc.egui_ctx.set_fonts(fonts);
             Ok(Box::new(Hoot::new(cc)))
         }),
@@ -236,14 +249,16 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                             .show_ui(ui, |ui| {
                                 for account in app.accounts.clone() {
                                     let display_text = get_account_summary_display_text(&account);
-                                    let is_selected =
-                                        app.active_account_pubkey.as_deref() == Some(&account.pubkey_hex);
+                                    let is_selected = app.active_account_pubkey.as_deref()
+                                        == Some(&account.pubkey_hex);
                                     if ui.selectable_label(is_selected, display_text).clicked() {
                                         match app
                                             .backend
                                             .set_active_account(Some(account.pubkey_hex.clone()))
                                         {
-                                            Ok(()) => app.active_account_pubkey = Some(account.pubkey_hex),
+                                            Ok(()) => {
+                                                app.active_account_pubkey = Some(account.pubkey_hex)
+                                            }
                                             Err(e) => error!("Failed to select account: {}", e),
                                         }
                                     }
@@ -369,7 +384,11 @@ impl Hoot {
             .iter()
             .find(|account| account.is_active)
             .map(|account| account.pubkey_hex.clone())
-            .or_else(|| self.accounts.first().map(|account| account.pubkey_hex.clone()));
+            .or_else(|| {
+                self.accounts
+                    .first()
+                    .map(|account| account.pubkey_hex.clone())
+            });
         self.table_entries = snapshot.inbox;
         self.trash_entries = snapshot.trash;
         self.request_entries = snapshot.requests;
@@ -403,12 +422,10 @@ impl Hoot {
                     Err(e) => error!("Failed to initialize backend: {}", e),
                 }
             }
-            HootStatus::Ready => {
-                match self.backend.tick() {
-                    Ok(events) => self.handle_backend_events(events),
-                    Err(e) => error!("Backend tick failed: {}", e),
-                }
-            }
+            HootStatus::Ready => match self.backend.tick() {
+                Ok(events) => self.handle_backend_events(events),
+                Err(e) => error!("Backend tick failed: {}", e),
+            },
         }
     }
 
@@ -437,7 +454,11 @@ impl Hoot {
                     .iter()
                     .find(|account| account.is_active)
                     .map(|account| account.pubkey_hex.clone())
-                    .or_else(|| self.accounts.first().map(|account| account.pubkey_hex.clone()));
+                    .or_else(|| {
+                        self.accounts
+                            .first()
+                            .map(|account| account.pubkey_hex.clone())
+                    });
             }
             Err(e) => error!("Failed to load accounts: {}", e),
         }
@@ -488,9 +509,11 @@ impl Hoot {
     }
 
     pub fn active_account(&self) -> Option<&AccountSummary> {
-        self.active_account_pubkey
-            .as_ref()
-            .and_then(|pubkey| self.accounts.iter().find(|account| &account.pubkey_hex == pubkey))
+        self.active_account_pubkey.as_ref().and_then(|pubkey| {
+            self.accounts
+                .iter()
+                .find(|account| &account.pubkey_hex == pubkey)
+        })
     }
 
     pub fn resolve_name(&self, pubkey: &str) -> Option<String> {

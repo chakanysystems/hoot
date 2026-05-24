@@ -57,7 +57,8 @@ impl ComposeWindow {
                     ui.separator();
                     ui.add_sized(
                         [ui.available_width(), ui.available_height() - 64.0],
-                        egui::TextEdit::multiline(&mut state.content).hint_text("Write your message..."),
+                        egui::TextEdit::multiline(&mut state.content)
+                            .hint_text("Write your message..."),
                     );
 
                     if let Some((message, color)) = &state.send_status {
@@ -90,7 +91,10 @@ impl ComposeWindow {
                                 }
                                 Ok(result) if !result.failed_nip05.is_empty() => {
                                     state.send_status = Some((
-                                        format!("Could not resolve: {}", result.failed_nip05.join(", ")),
+                                        format!(
+                                            "Could not resolve: {}",
+                                            result.failed_nip05.join(", ")
+                                        ),
                                         Color32::RED,
                                     ));
                                 }
@@ -103,7 +107,8 @@ impl ComposeWindow {
                                 }
                                 Err(e) => {
                                     error!("Failed to send message: {}", e);
-                                    state.send_status = Some((format!("Failed to send: {}", e), Color32::RED));
+                                    state.send_status =
+                                        Some((format!("Failed to send: {}", e), Color32::RED));
                                 }
                             }
                         }
@@ -116,6 +121,7 @@ impl ComposeWindow {
                                     content: state.content.clone(),
                                     parent_events: state.parent_event_ids.clone(),
                                     selected_account: state.selected_account_pubkey.clone(),
+                                    selected_nip05: state.selected_nip05.clone(),
                                 },
                                 state.draft_id,
                             );
@@ -132,11 +138,10 @@ impl ComposeWindow {
                                 for account in &app.accounts {
                                     let selected = state.selected_account_pubkey.as_deref()
                                         == Some(account.pubkey_hex.as_str());
-                                    if ui
-                                        .selectable_label(selected, &account.pubkey_hex)
-                                        .clicked()
+                                    if ui.selectable_label(selected, &account.pubkey_hex).clicked()
                                     {
-                                        state.selected_account_pubkey = Some(account.pubkey_hex.clone());
+                                        state.selected_account_pubkey =
+                                            Some(account.pubkey_hex.clone());
                                     }
                                 }
                             });
@@ -153,6 +158,7 @@ impl ComposeWindow {
                     content: input.content,
                     parent_events: input.parent_events,
                     selected_account: input.selected_account,
+                    selected_nip05: input.selected_nip05,
                     created_at: 0,
                     updated_at: 0,
                 };

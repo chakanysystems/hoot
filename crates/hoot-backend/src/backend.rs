@@ -130,7 +130,9 @@ impl HootBackend {
             .map_err(database_error)?;
         if !expired_ids.is_empty() {
             let expired: HashSet<String> = expired_ids.into_iter().collect();
-            inner.events.retain(|event| !expired.contains(&event.id.to_string()));
+            inner
+                .events
+                .retain(|event| !expired.contains(&event.id.to_string()));
         }
 
         if !inner.account_manager.loaded_keys.is_empty() {
@@ -267,7 +269,11 @@ impl HootBackend {
         .map_err(database_error)
     }
 
-    pub fn get_thread(&self, event_id: String, include_trash: bool) -> HootResult<Vec<MailMessageDto>> {
+    pub fn get_thread(
+        &self,
+        event_id: String,
+        include_trash: bool,
+    ) -> HootResult<Vec<MailMessageDto>> {
         let inner = self.lock_inner()?;
         let thread = if include_trash {
             inner.db.get_email_thread_including_trash(&event_id)
@@ -298,6 +304,7 @@ impl HootBackend {
                 &draft.content,
                 &draft.parent_events,
                 draft.selected_account.as_deref(),
+                draft.selected_nip05.as_deref(),
             )
             .map_err(database_error)
     }
@@ -313,6 +320,7 @@ impl HootBackend {
                 &draft.content,
                 &draft.parent_events,
                 draft.selected_account.as_deref(),
+                draft.selected_nip05.as_deref(),
             )
             .map_err(database_error)
     }
@@ -337,7 +345,11 @@ impl HootBackend {
             .map_err(database_error)
     }
 
-    pub fn update_contact_petname(&self, pubkey: String, petname: Option<String>) -> HootResult<()> {
+    pub fn update_contact_petname(
+        &self,
+        pubkey: String,
+        petname: Option<String>,
+    ) -> HootResult<()> {
         let inner = self.lock_inner()?;
         inner
             .db
@@ -360,7 +372,10 @@ impl HootBackend {
 
     pub fn remove_sender_status(&self, pubkey: String) -> HootResult<()> {
         let inner = self.lock_inner()?;
-        inner.db.remove_sender_status(&pubkey).map_err(database_error)
+        inner
+            .db
+            .remove_sender_status(&pubkey)
+            .map_err(database_error)
     }
 
     pub fn get_sender_status(&self, pubkey: String) -> HootResult<Option<SenderStatusDto>> {
@@ -379,7 +394,10 @@ impl HootBackend {
 
     pub fn get_nip05s_for_pubkey(&self, pubkey: String) -> HootResult<Vec<Nip05Entry>> {
         let inner = self.lock_inner()?;
-        inner.db.get_nip05s_for_pubkey(&pubkey).map_err(database_error)
+        inner
+            .db
+            .get_nip05s_for_pubkey(&pubkey)
+            .map_err(database_error)
     }
 
     pub fn add_nip05(&self, pubkey: String, nip05: String, is_own: bool) -> HootResult<()> {
@@ -394,7 +412,10 @@ impl HootBackend {
 
     pub fn delete_nip05(&self, pubkey: String, nip05: String) -> HootResult<()> {
         let inner = self.lock_inner()?;
-        inner.db.delete_nip05(&pubkey, &nip05).map_err(database_error)
+        inner
+            .db
+            .delete_nip05(&pubkey, &nip05)
+            .map_err(database_error)
     }
 
     pub fn request_nip05_resolution(&self, nip05: String) -> HootResult<()> {
@@ -429,11 +450,13 @@ impl HootBackend {
         let event = EventBuilder::new(Kind::Metadata, serialized)
             .sign_with_keys(&keys)
             .map_err(nostr_error)?;
-        inner.db.write_profile_metadata(event.clone()).map_err(database_error)?;
-        inner.profile_metadata.insert(
-            pubkey_hex,
-            ProfileOption::Some(metadata),
-        );
+        inner
+            .db
+            .write_profile_metadata(event.clone())
+            .map_err(database_error)?;
+        inner
+            .profile_metadata
+            .insert(pubkey_hex, ProfileOption::Some(metadata));
         send_client_message(&mut inner, ClientMessage::Event { event })
     }
 
@@ -485,9 +508,9 @@ impl HootBackend {
             content: input.content,
             sender_nip05: input.selected_nip05,
         };
-        let events_to_send = message.try_to_events(&sending_keys).map_err(|message| {
-            HootError::Nostr { message }
-        })?;
+        let events_to_send = message
+            .try_to_events(&sending_keys)
+            .map_err(|message| HootError::Nostr { message })?;
         let sent_count = events_to_send.len() as u32;
         for event in events_to_send.into_values() {
             send_client_message(&mut inner, ClientMessage::Event { event })?;
@@ -509,7 +532,10 @@ impl HootBackend {
 
     pub fn restore_from_trash(&self, event_id: String) -> HootResult<()> {
         let mut inner = self.lock_inner()?;
-        inner.db.restore_from_trash(&event_id).map_err(database_error)
+        inner
+            .db
+            .restore_from_trash(&event_id)
+            .map_err(database_error)
     }
 
     pub fn delete_messages_permanently(&self, event_ids: Vec<String>) -> HootResult<()> {
@@ -523,7 +549,10 @@ impl HootBackend {
     pub fn add_relay(&self, url: String) -> HootResult<()> {
         let mut inner = self.lock_inner()?;
         let wake_up = inner.wake_up.clone();
-        inner.relays.add_url(url, move || (wake_up)()).map_err(HootError::from)
+        inner
+            .relays
+            .add_url(url, move || (wake_up)())
+            .map_err(HootError::from)
     }
 
     pub fn remove_relay(&self, url: String) -> HootResult<()> {
@@ -539,8 +568,12 @@ impl HootBackend {
             .relays
             .values()
             .map(|relay| {
-                let mut authenticated_pubkeys: Vec<String> =
-                    relay.auth_state.authenticated_keys.iter().cloned().collect();
+                let mut authenticated_pubkeys: Vec<String> = relay
+                    .auth_state
+                    .authenticated_keys
+                    .iter()
+                    .cloned()
+                    .collect();
                 authenticated_pubkeys.sort();
                 RelayStatusDto {
                     url: relay.url.clone(),
@@ -688,6 +721,7 @@ fn draft_dtos(drafts: Vec<db::Draft>) -> Vec<DraftDto> {
             content: draft.content,
             parent_events: draft.parent_events,
             selected_account: draft.selected_account,
+            selected_nip05: draft.selected_nip05,
             created_at: draft.created_at,
             updated_at: draft.updated_at,
         })
@@ -712,9 +746,21 @@ fn mail_message_dto(message: MailMessage) -> MailMessageDto {
         id: message.id.map(|id| id.to_hex()),
         created_at: message.created_at,
         author_pubkey: message.author.map(|pubkey| pubkey.to_hex()),
-        to_pubkeys: message.to.into_iter().map(|pubkey| pubkey.to_hex()).collect(),
-        cc_pubkeys: message.cc.into_iter().map(|pubkey| pubkey.to_hex()).collect(),
-        bcc_pubkeys: message.bcc.into_iter().map(|pubkey| pubkey.to_hex()).collect(),
+        to_pubkeys: message
+            .to
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect(),
+        cc_pubkeys: message
+            .cc
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect(),
+        bcc_pubkeys: message
+            .bcc
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect(),
         parent_event_ids: message
             .parent_events
             .unwrap_or_default()
@@ -828,10 +874,9 @@ fn get_profile_metadata(
         .get_profile_metadata(&pubkey_hex)
         .map_err(database_error)?
     {
-        inner.profile_metadata.insert(
-            pubkey_hex,
-            ProfileOption::Some(metadata.clone()),
-        );
+        inner
+            .profile_metadata
+            .insert(pubkey_hex, ProfileOption::Some(metadata.clone()));
         return Ok(Some(metadata));
     }
 
@@ -843,14 +888,13 @@ fn get_profile_metadata(
         .relays
         .add_subscription(subscription)
         .map_err(HootError::from)?;
-    inner.profile_metadata.insert(pubkey_hex, ProfileOption::Waiting);
+    inner
+        .profile_metadata
+        .insert(pubkey_hex, ProfileOption::Waiting);
     Ok(None)
 }
 
-fn resolve_recipients(
-    inner: &mut BackendInner,
-    to_field: &str,
-) -> HootResult<RecipientResolution> {
+fn resolve_recipients(inner: &mut BackendInner, to_field: &str) -> HootResult<RecipientResolution> {
     let mut public_keys = Vec::new();
     let mut pending_nip05 = Vec::new();
     let mut failed_nip05 = Vec::new();
@@ -964,9 +1008,12 @@ fn perform_auth(inner: &mut BackendInner, relay_url: &str) -> HootResult<()> {
         if inner.relays.is_key_authenticated(relay_url, &pubkey) {
             continue;
         }
-        let event = AccountManager::create_auth_event(keys, relay_url, &challenge)
-            .map_err(nostr_error)?;
-        inner.relays.send_auth(relay_url, event).map_err(HootError::from)?;
+        let event =
+            AccountManager::create_auth_event(keys, relay_url, &challenge).map_err(nostr_error)?;
+        inner
+            .relays
+            .send_auth(relay_url, event)
+            .map_err(HootError::from)?;
         inner.relays.add_authenticated_key(relay_url, pubkey);
     }
     Ok(())
@@ -1045,10 +1092,9 @@ fn process_event(
         if let Some(nip05) = &metadata.nip05 {
             cache_and_verify_nip05(inner, nip05, &event.pubkey.to_string(), false)?;
         }
-        inner.profile_metadata.insert(
-            event.pubkey.to_string(),
-            ProfileOption::Some(metadata),
-        );
+        inner
+            .profile_metadata
+            .insert(event.pubkey.to_string(), ProfileOption::Some(metadata));
         inner
             .db
             .update_profile_metadata(event)
@@ -1057,10 +1103,18 @@ fn process_event(
     }
 
     if event.kind == Kind::GiftWrap {
-        if inner.db.gift_wrap_exists(&event.id.to_string()).map_err(database_error)? {
+        if inner
+            .db
+            .gift_wrap_exists(&event.id.to_string())
+            .map_err(database_error)?
+        {
             return Ok(false);
         }
-        if inner.db.is_deleted(&event.id.to_string(), None).map_err(database_error)? {
+        if inner
+            .db
+            .is_deleted(&event.id.to_string(), None)
+            .map_err(database_error)?
+        {
             return Ok(false);
         }
 
@@ -1137,10 +1191,17 @@ fn process_event(
         return Ok(true);
     }
 
-    if inner.db.has_event(&event.id.to_string()).map_err(database_error)? {
+    if inner
+        .db
+        .has_event(&event.id.to_string())
+        .map_err(database_error)?
+    {
         return Ok(false);
     }
-    inner.db.store_event(&event, None, None).map_err(database_error)?;
+    inner
+        .db
+        .store_event(&event, None, None)
+        .map_err(database_error)?;
     inner.events.push(event);
     Ok(true)
 }
@@ -1158,7 +1219,11 @@ fn apply_deletions(
     let mut scoped_event_ids = Vec::new();
     let mut unscoped_event_ids = Vec::new();
     for event_id in event_ids {
-        match inner.db.get_event_kind_pubkey(&event_id).map_err(database_error)? {
+        match inner
+            .db
+            .get_event_kind_pubkey(&event_id)
+            .map_err(database_error)?
+        {
             Some((kind, pubkey)) => {
                 let is_gift_wrap = kind == i64::from(Kind::GiftWrap.as_u16());
                 let is_mail = kind == i64::from(MAIL_EVENT_KIND);
@@ -1207,7 +1272,12 @@ fn apply_deletions(
 
     let mut wrap_ids = Vec::new();
     for event_id in &apply_event_ids {
-        wrap_ids.extend(inner.db.get_wrap_ids_for_inner(event_id).map_err(database_error)?);
+        wrap_ids.extend(
+            inner
+                .db
+                .get_wrap_ids_for_inner(event_id)
+                .map_err(database_error)?,
+        );
     }
     if !wrap_ids.is_empty() {
         inner
@@ -1218,6 +1288,8 @@ fn apply_deletions(
 
     let mut removed_ids: HashSet<String> = apply_event_ids.into_iter().collect();
     removed_ids.extend(wrap_ids);
-    inner.events.retain(|event| !removed_ids.contains(&event.id.to_string()));
+    inner
+        .events
+        .retain(|event| !removed_ids.contains(&event.id.to_string()));
     Ok(true)
 }

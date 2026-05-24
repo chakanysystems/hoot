@@ -16,6 +16,7 @@ pub struct DraftDto {
     pub content: String,
     pub parent_events: Vec<String>,
     pub selected_account: Option<String>,
+    pub selected_nip05: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -27,9 +28,12 @@ pub struct DraftInput {
     pub content: String,
     pub parent_events: Vec<String>,
     pub selected_account: Option<String>,
+    pub selected_nip05: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq, uniffi::Record)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq, uniffi::Record,
+)]
 pub struct ProfileMetadata {
     pub name: Option<String>,
     pub display_name: Option<String>,

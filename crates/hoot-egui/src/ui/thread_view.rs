@@ -82,11 +82,14 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                     }
                     Some("allowed") => {
                         ui.horizontal(|ui| {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("Move to Junk").clicked() {
-                                    deny_sender = Some(pubkey.to_string());
-                                }
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.small_button("Move to Junk").clicked() {
+                                        deny_sender = Some(pubkey.to_string());
+                                    }
+                                },
+                            );
                         });
                         ui.add_space(4.0);
                     }
@@ -120,7 +123,10 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
     }
 
     if let Some(pubkey) = deny_sender {
-        if let Err(e) = app.backend.set_sender_status(pubkey, SenderStatusDto::Junked) {
+        if let Err(e) = app
+            .backend
+            .set_sender_status(pubkey, SenderStatusDto::Junked)
+        {
             error!("Failed to junk sender: {}", e);
         } else {
             app.state.requests.add_to_contacts = false;
@@ -161,10 +167,8 @@ fn sender_prompt(
                         "Also add to Contacts",
                     );
                     if ui.button(accept_label).clicked() {
-                        *accept_sender = Some((
-                            pubkey.to_string(),
-                            app.state.requests.add_to_contacts,
-                        ));
+                        *accept_sender =
+                            Some((pubkey.to_string(), app.state.requests.add_to_contacts));
                     }
                     if ui.button(deny_label).clicked() && deny_label != "Keep in Junk" {
                         *deny_sender = Some(pubkey.to_string());
@@ -187,8 +191,7 @@ fn render_message(app: &mut Hoot, ui: &mut egui::Ui, ev: MailMessageDto) {
                 Some(id) => id.clone(),
                 None => {
                     ui.label(
-                        RichText::new("Error: malformed message (missing ID)")
-                            .color(Color32::RED),
+                        RichText::new("Error: malformed message (missing ID)").color(Color32::RED),
                     );
                     return;
                 }
@@ -292,7 +295,11 @@ fn render_pubkey_with_nip05(
     let name = app
         .resolve_name(pubkey)
         .unwrap_or_else(|| pubkey.to_string());
-    let cached = app.backend.get_cached_nip05(pubkey.to_string()).ok().flatten();
+    let cached = app
+        .backend
+        .get_cached_nip05(pubkey.to_string())
+        .ok()
+        .flatten();
     ui.horizontal(|ui| {
         ui.label(RichText::new(name).strong());
         if let Some(entry) = cached {

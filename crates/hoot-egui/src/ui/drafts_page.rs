@@ -24,7 +24,11 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
     if app.drafts.is_empty() {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("No drafts").size(16.0).color(style::TEXT_MUTED));
+            ui.label(
+                RichText::new("No drafts")
+                    .size(16.0)
+                    .color(style::TEXT_MUTED),
+            );
         });
         return;
     }
@@ -74,7 +78,10 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                     ui.label(crate::style::format_timestamp(draft.updated_at));
                 });
                 row.col(|ui| {
-                    if ui.small_button(RichText::new("×").color(Color32::RED)).clicked() {
+                    if ui
+                        .small_button(RichText::new("×").color(Color32::RED))
+                        .clicked()
+                    {
                         draft_to_delete = Some(draft.id);
                     }
                 });
@@ -88,7 +95,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
             content: draft.content,
             parent_event_ids: draft.parent_events,
             selected_account_pubkey: draft.selected_account,
-            selected_nip05: None,
+            selected_nip05: draft.selected_nip05,
             minimized: false,
             draft_id: Some(draft.id),
             send_status: None,

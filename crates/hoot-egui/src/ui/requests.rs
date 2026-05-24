@@ -69,7 +69,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                         let label = app
                             .resolve_name(&event.pubkey)
                             .unwrap_or_else(|| event.pubkey.to_string());
-                        
+
                         // Check for NIP-05 and show warning if unverified
                         let has_unverified_nip05 = match app.backend.get_cached_nip05(event.pubkey.clone()) {
                             Ok(Some(cached)) => cached.last_verified.is_none(),
@@ -82,7 +82,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                                 false
                             }
                         };
-                        
+
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(label).strong());
                             if has_unverified_nip05 {

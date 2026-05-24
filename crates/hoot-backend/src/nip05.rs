@@ -5,7 +5,6 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use tracing::{debug, error, warn};
 
-
 /// Verification status for a NIP-05 identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Nip05VerificationStatus {

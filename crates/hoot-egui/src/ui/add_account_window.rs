@@ -53,7 +53,10 @@ impl AddAccountWindow {
             .default_size([500.0, 400.0])
             .min_width(450.0)
             .min_height(350.0)
-            .default_pos([screen_rect.center().x - 250.0, screen_rect.center().y - 200.0])
+            .default_pos([
+                screen_rect.center().x - 250.0,
+                screen_rect.center().y - 200.0,
+            ])
             .open(&mut keep_open)
             .show(ctx, |ui| {
                 let step = app
@@ -75,7 +78,9 @@ impl AddAccountWindow {
                 match step {
                     AccountCreationStep::ModeSelection => Self::render_mode_selection(app, ui, id),
                     AccountCreationStep::ImportKey => Self::render_import_step(app, ui, id),
-                    AccountCreationStep::ConfigureMetadata => Self::render_metadata_step(app, ui, id),
+                    AccountCreationStep::ConfigureMetadata => {
+                        Self::render_metadata_step(app, ui, id)
+                    }
                     AccountCreationStep::Review => {
                         if Self::render_review_step(app, ui, id) {
                             should_close = true;
@@ -106,7 +111,10 @@ impl AddAccountWindow {
             ui.add_space(30.0);
             let button_size = [ui.available_width() * 0.8, 60.0];
             if ui
-                .add_sized(button_size, egui::Button::new(RichText::new("Generate New Keypair").size(14.0)))
+                .add_sized(
+                    button_size,
+                    egui::Button::new(RichText::new("Generate New Keypair").size(14.0)),
+                )
                 .clicked()
             {
                 let state = app.state.add_account_window.get_mut(&id).unwrap();
@@ -116,7 +124,10 @@ impl AddAccountWindow {
             }
             ui.add_space(15.0);
             if ui
-                .add_sized(button_size, egui::Button::new(RichText::new("Import Existing Key").size(14.0)))
+                .add_sized(
+                    button_size,
+                    egui::Button::new(RichText::new("Import Existing Key").size(14.0)),
+                )
                 .clicked()
             {
                 let state = app.state.add_account_window.get_mut(&id).unwrap();
@@ -130,14 +141,24 @@ impl AddAccountWindow {
     fn render_import_step(app: &mut crate::Hoot, ui: &mut egui::Ui, id: egui::Id) {
         ui.add_space(10.0);
         ui.label("Enter your private key (nsec):");
-        let mut nsec_input = app.state.add_account_window.get(&id).unwrap().nsec_input.clone();
+        let mut nsec_input = app
+            .state
+            .add_account_window
+            .get(&id)
+            .unwrap()
+            .nsec_input
+            .clone();
         ui.add_sized(
             [ui.available_width(), 24.0],
             egui::TextEdit::singleline(&mut nsec_input)
                 .hint_text("nsec1...")
                 .password(true),
         );
-        app.state.add_account_window.get_mut(&id).unwrap().nsec_input = nsec_input.clone();
+        app.state
+            .add_account_window
+            .get_mut(&id)
+            .unwrap()
+            .nsec_input = nsec_input.clone();
         let validation_result = super::account_setup::validate_nsec(app, &nsec_input);
         ui.horizontal(|ui| match &validation_result {
             Ok(_) => ui.colored_label(egui::Color32::GREEN, "✓ Valid nsec format"),
@@ -152,13 +173,19 @@ impl AddAccountWindow {
                 match validation_result {
                     Ok(account) => {
                         if super::account_setup::account_already_exists(app, &account.pubkey_hex) {
-                            app.state.add_account_window.get_mut(&id).unwrap().error_message =
-                                Some("This account is already added".to_string());
+                            app.state
+                                .add_account_window
+                                .get_mut(&id)
+                                .unwrap()
+                                .error_message = Some("This account is already added".to_string());
                         } else {
                             let state = app.state.add_account_window.get_mut(&id).unwrap();
                             state.pending_account = Some(account.clone());
                             let (display_name, name, picture_url, fetched) =
-                                super::account_setup::fetch_and_prefill_metadata(app, &account.pubkey_hex);
+                                super::account_setup::fetch_and_prefill_metadata(
+                                    app,
+                                    &account.pubkey_hex,
+                                );
                             let state = app.state.add_account_window.get_mut(&id).unwrap();
                             state.display_name = display_name;
                             state.name = name;
@@ -169,12 +196,17 @@ impl AddAccountWindow {
                         }
                     }
                     Err(e) => {
-                        app.state.add_account_window.get_mut(&id).unwrap().error_message = Some(e);
+                        app.state
+                            .add_account_window
+                            .get_mut(&id)
+                            .unwrap()
+                            .error_message = Some(e);
                     }
                 }
             }
             if ui.button("Back").clicked() {
-                app.state.add_account_window.get_mut(&id).unwrap().step = AccountCreationStep::ModeSelection;
+                app.state.add_account_window.get_mut(&id).unwrap().step =
+                    AccountCreationStep::ModeSelection;
             }
         });
     }
@@ -198,7 +230,8 @@ impl AddAccountWindow {
         ui.checkbox(&mut state.publish_metadata, "Publish metadata to relays");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Review").clicked() {
-                app.state.add_account_window.get_mut(&id).unwrap().step = AccountCreationStep::Review;
+                app.state.add_account_window.get_mut(&id).unwrap().step =
+                    AccountCreationStep::Review;
             }
             if ui.button("Back").clicked() {
                 let step = if app.state.add_account_window.get(&id).unwrap().mode
@@ -239,25 +272,32 @@ impl AddAccountWindow {
                         &state.picture_url,
                         state.publish_metadata,
                     ),
-                    Some(AccountCreationMode::Import) => super::account_setup::save_imported_account(
-                        app,
-                        &state.nsec_input,
-                        &state.display_name,
-                        &state.name,
-                        &state.picture_url,
-                        state.publish_metadata,
-                    ),
+                    Some(AccountCreationMode::Import) => {
+                        super::account_setup::save_imported_account(
+                            app,
+                            &state.nsec_input,
+                            &state.display_name,
+                            &state.name,
+                            &state.picture_url,
+                            state.publish_metadata,
+                        )
+                    }
                     None => Err("No account mode selected".to_string()),
                 };
                 match result {
                     Ok(_) => should_close = true,
                     Err(e) => {
-                        app.state.add_account_window.get_mut(&id).unwrap().error_message = Some(e);
+                        app.state
+                            .add_account_window
+                            .get_mut(&id)
+                            .unwrap()
+                            .error_message = Some(e);
                     }
                 }
             }
             if ui.button("Back").clicked() {
-                app.state.add_account_window.get_mut(&id).unwrap().step = AccountCreationStep::ConfigureMetadata;
+                app.state.add_account_window.get_mut(&id).unwrap().step =
+                    AccountCreationStep::ConfigureMetadata;
             }
         });
         should_close

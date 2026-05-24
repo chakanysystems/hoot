@@ -54,7 +54,9 @@ impl OnboardingScreen {
     fn password_field(ui: &mut egui::Ui, value: &mut String, hint: &str) {
         ui.add_sized(
             [300.0, 24.0],
-            egui::TextEdit::singleline(value).password(true).hint_text(hint),
+            egui::TextEdit::singleline(value)
+                .password(true)
+                .hint_text(hint),
         );
     }
 
@@ -71,7 +73,9 @@ impl OnboardingScreen {
     }
 
     fn onboarding_new_user_flow(app: &mut Hoot, ui: &mut egui::Ui) {
-        if !app.backend.is_database_initialized().unwrap_or(false) && app.backend.db_file_has_password().unwrap_or(false) {
+        if !app.backend.is_database_initialized().unwrap_or(false)
+            && app.backend.db_file_has_password().unwrap_or(false)
+        {
             Self::onboarding_unlock_database(app, ui);
             return;
         }
@@ -85,11 +89,18 @@ impl OnboardingScreen {
 
     fn onboarding_unlock_database(app: &mut Hoot, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
-            Self::page_header(ui, "Unlock Database", "Enter your password to continue setup");
+            Self::page_header(
+                ui,
+                "Unlock Database",
+                "Enter your password to continue setup",
+            );
             Self::show_error(ui, &app.state.onboarding.error_string);
             Self::password_field(ui, &mut app.state.onboarding.secret_input, "Password");
             if ui.button("Unlock").clicked() {
-                match app.backend.unlock_database(app.state.onboarding.secret_input.clone()) {
+                match app
+                    .backend
+                    .unlock_database(app.state.onboarding.secret_input.clone())
+                {
                     Ok(()) => app.state.onboarding.error_string.clear(),
                     Err(e) => app.state.onboarding.error_string = e.to_string(),
                 }
@@ -99,7 +110,11 @@ impl OnboardingScreen {
 
     fn render_mode_selection(app: &mut Hoot, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
-            Self::page_header(ui, "Create your account", "Generate a new key or import an existing nsec");
+            Self::page_header(
+                ui,
+                "Create your account",
+                "Generate a new key or import an existing nsec",
+            );
             if ui.button("Generate New Keypair").clicked() {
                 app.state.onboarding.mode = Some(AccountCreationMode::Generate);
                 app.state.onboarding.error_string.clear();
@@ -113,11 +128,17 @@ impl OnboardingScreen {
                     .hint_text("nsec1..."),
             );
             if ui.button("Continue with imported key").clicked() {
-                match app.backend.validate_nsec(app.state.onboarding.nsec_input.clone()) {
+                match app
+                    .backend
+                    .validate_nsec(app.state.onboarding.nsec_input.clone())
+                {
                     Ok(account) => {
                         app.state.onboarding.pending_account = Some(account.clone());
                         let (display_name, name, picture_url, fetched) =
-                            super::account_setup::fetch_and_prefill_metadata(app, &account.pubkey_hex);
+                            super::account_setup::fetch_and_prefill_metadata(
+                                app,
+                                &account.pubkey_hex,
+                            );
                         app.state.onboarding.display_name = display_name;
                         app.state.onboarding.name = name;
                         app.state.onboarding.picture_url = picture_url;
@@ -147,7 +168,10 @@ impl OnboardingScreen {
                 ui.label("Picture URL");
                 ui.text_edit_singleline(&mut app.state.onboarding.picture_url);
             });
-            ui.checkbox(&mut app.state.onboarding.publish_metadata, "Publish metadata to relays");
+            ui.checkbox(
+                &mut app.state.onboarding.publish_metadata,
+                "Publish metadata to relays",
+            );
             Self::show_error(ui, &app.state.onboarding.error_string);
             if ui.button("Save Account").clicked() {
                 if Self::save_account(app) {
@@ -166,7 +190,10 @@ impl OnboardingScreen {
             Self::show_error(ui, &app.state.onboarding.error_string);
             Self::password_field(ui, &mut app.state.onboarding.secret_input, "Password");
             if ui.button("Unlock").clicked() {
-                match app.backend.unlock_database(app.state.onboarding.secret_input.clone()) {
+                match app
+                    .backend
+                    .unlock_database(app.state.onboarding.secret_input.clone())
+                {
                     Ok(()) => {
                         app.status = HootStatus::Initializing;
                         app.page = Page::Inbox;
