@@ -203,6 +203,19 @@ impl HootBackend {
         account_summary(&inner, &keys)
     }
 
+    /// Generate a new keypair without saving it. Returns the account summary and the nsec.
+    pub fn generate_account_preview(&self) -> HootResult<AccountPreview> {
+        let keys = Keys::generate();
+        let nsec = keys
+            .secret_key()
+            .to_bech32()
+            .map_err(|e| HootError::Nostr {
+                message: e.to_string(),
+            })?;
+        let summary = account_summary_for_keys(&keys, None, false);
+        Ok(AccountPreview { summary, nsec })
+    }
+
     pub fn import_account(&self, nsec: String) -> HootResult<AccountSummary> {
         let keys = account_manager::validate_nsec(&nsec)
             .map_err(|message| HootError::InvalidNsec { message })?;

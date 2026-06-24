@@ -1,5 +1,5 @@
 use crate::style;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32};
 use hoot_backend::{ComposeMessageInput, DraftDto, DraftInput};
 use tracing::{error, info};
 
@@ -39,6 +39,11 @@ impl ComposeWindow {
             .min_width(400.0)
             .min_height(300.0)
             .open(&mut open)
+            .frame(
+                egui::Frame::new()
+                    .fill(style::SURFACE)
+                    .inner_margin(egui::Margin::same(20)),
+            )
             .show(ctx, |ui| {
                 let state = match app.state.compose_window.get_mut(&id) {
                     Some(state) => state,
@@ -47,18 +52,24 @@ impl ComposeWindow {
 
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.label("To:");
-                        ui.text_edit_singleline(&mut state.to_field);
+                        ui.label(egui::RichText::new("To:").color(style::TEXT3));
+                        style::underline_text_edit(
+                            ui,
+                            &mut state.to_field,
+                            "recipient@example.com",
+                            13.5,
+                        );
                     });
                     ui.horizontal(|ui| {
-                        ui.label("Subject:");
-                        ui.text_edit_singleline(&mut state.subject);
+                        ui.label(egui::RichText::new("Subject:").color(style::TEXT3));
+                        style::underline_text_edit(ui, &mut state.subject, "Subject", 13.5);
                     });
-                    ui.separator();
+                    ui.add_space(8.0);
                     ui.add_sized(
                         [ui.available_width(), ui.available_height() - 64.0],
                         egui::TextEdit::multiline(&mut state.content)
-                            .hint_text("Write your message..."),
+                            .hint_text("Write your message...")
+                            .font(egui::FontId::proportional(14.0)),
                     );
 
                     if let Some((message, color)) = &state.send_status {
@@ -66,14 +77,13 @@ impl ComposeWindow {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new("Send").color(Color32::WHITE))
-                                    .fill(style::ACCENT)
-                                    .corner_radius(6),
-                            )
-                            .clicked()
-                        {
+                        let send_btn = egui::Button::new(
+                            egui::RichText::new("Send").color(Color32::WHITE).size(13.5),
+                        )
+                        .fill(style::ACCENT)
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .min_size(egui::Vec2::new(72.0, 32.0));
+                        if ui.add(send_btn).clicked() {
                             let input = ComposeMessageInput {
                                 subject: state.subject.clone(),
                                 content: state.content.clone(),
@@ -113,7 +123,15 @@ impl ComposeWindow {
                             }
                         }
 
-                        if ui.button("Save Draft").clicked() {
+                        let save_draft_btn = egui::Button::new(
+                            egui::RichText::new("Save Draft")
+                                .color(style::TEXT)
+                                .size(13.5),
+                        )
+                        .fill(style::SURFACE2)
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .min_size(egui::Vec2::new(72.0, 32.0));
+                        if ui.add(save_draft_btn).clicked() {
                             draft_action = DraftAction::Save(
                                 DraftInput {
                                     subject: state.subject.clone(),

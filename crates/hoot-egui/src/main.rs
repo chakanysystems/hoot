@@ -113,170 +113,379 @@ fn get_account_summary_display_text(account: &AccountSummary) -> String {
     }
 }
 
-fn render_nav_item(ui: &mut egui::Ui, label: &str, is_selected: bool) -> egui::Response {
+fn render_nav_item(
+    ui: &mut egui::Ui,
+    icon: &str,
+    label: &str,
+    is_selected: bool,
+) -> egui::Response {
+    render_nav_item_with_badge(ui, icon, label, is_selected, 0)
+}
+
+fn render_nav_item_with_badge(
+    ui: &mut egui::Ui,
+    icon: &str,
+    label: &str,
+    is_selected: bool,
+    badge_count: usize,
+) -> egui::Response {
     let desired_size = egui::vec2(ui.available_width(), 30.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
     if is_selected {
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(6), style::ACCENT_LIGHT);
-    } else if response.hovered() {
-        ui.painter().rect_filled(
-            rect,
-            egui::CornerRadius::same(6),
-            Color32::from_rgba_premultiplied(149, 117, 205, 20),
+        let bar_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.top() + 4.0),
+            egui::vec2(3.0, rect.height() - 8.0),
         );
+        ui.painter()
+            .rect_filled(bar_rect, egui::CornerRadius::same(2), style::ACCENT);
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(8), style::accent_soft());
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(8), style::SURFACE2);
     }
 
+    let text_color = if is_selected {
+        style::ACCENT
+    } else if response.hovered() {
+        style::TEXT
+    } else {
+        style::TEXT2
+    };
+
+    let badge_reserved = if badge_count > 0 { 34.0 } else { 0.0 };
+    let icon_x = rect.left() + 10.0;
     ui.painter().text(
-        rect.left_center() + egui::vec2(10.0, 0.0),
+        egui::Pos2::new(icon_x, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        label,
+        icon,
         FontId::proportional(13.0),
-        if is_selected {
-            style::ACCENT
-        } else {
-            ui.visuals().text_color()
-        },
+        text_color,
     );
+
+    let text_x = icon_x + 15.0 + 6.0;
+    let max_text_w = (rect.right() - badge_reserved - text_x - 4.0).max(0.0);
+    let galley = ui.painter().layout(
+        label.to_string(),
+        FontId::proportional(13.5),
+        text_color,
+        max_text_w,
+    );
+    ui.painter().galley(
+        egui::Pos2::new(text_x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        text_color,
+    );
+
+    if badge_count > 0 {
+        let badge_text = if badge_count > 99 {
+            "99+".to_string()
+        } else {
+            badge_count.to_string()
+        };
+        let badge_font = FontId::proportional(10.0);
+        let bgalley =
+            ui.painter()
+                .layout_no_wrap(badge_text.clone(), badge_font.clone(), Color32::WHITE);
+        let badge_w = (bgalley.size().x + 8.0).max(18.0);
+        let badge_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - badge_w / 2.0 - 4.0, rect.center().y),
+            egui::vec2(badge_w, 16.0),
+        );
+        ui.painter()
+            .rect_filled(badge_rect, egui::CornerRadius::same(8), style::ACCENT);
+        ui.painter().text(
+            badge_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            badge_text,
+            badge_font,
+            Color32::WHITE,
+        );
+    }
 
     response
 }
 
 fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
     egui::SidePanel::left("left_panel")
-        .default_width(style::SIDEBAR_WIDTH)
+        .exact_width(style::SIDEBAR_WIDTH)
+        .resizable(false)
+        .show_separator_line(false)
         .frame(
-            Frame::none()
-                .fill(style::SIDEBAR_BG)
-                .inner_margin(Margin::symmetric(16, 12)),
+            Frame::new()
+                .fill(style::SURFACE)
+                .inner_margin(Margin::same(0)),
         )
         .show(ctx, |ui| {
-            ui.vertical(|ui| {
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new("Hoot")
-                        .size(22.0)
-                        .strong()
-                        .color(style::ACCENT),
-                );
-                ui.add_space(16.0);
+            ui.set_min_height(ui.available_height());
+            let panel_rect = ui.max_rect();
 
-                let compose_width = ui.available_width();
-                if ui
-                    .add_sized(
-                        [compose_width, 38.0],
-                        egui::Button::new(
-                            RichText::new("✉ Compose").color(Color32::WHITE).size(14.0),
-                        )
-                        .fill(style::ACCENT)
-                        .corner_radius(8),
-                    )
-                    .clicked()
-                {
-                    let state = ui::compose_window::ComposeWindowState {
-                        subject: String::new(),
-                        to_field: String::new(),
-                        content: String::new(),
-                        parent_event_ids: Vec::new(),
-                        selected_account_pubkey: app.active_account_pubkey.clone(),
-                        selected_nip05: None,
-                        minimized: false,
-                        draft_id: None,
-                        send_status: None,
-                    };
-                    app.state
-                        .compose_window
-                        .insert(egui::Id::new(rand::random::<u32>()), state);
-                }
-
-                ui.add_space(16.0);
-
-                let nav_items: Vec<(&str, Page, usize)> = vec![
-                    ("📥 Inbox", Page::Inbox, app.table_entries.len()),
-                    ("📝 Drafts", Page::Drafts, app.drafts.len()),
-                    ("⭐ Starred", Page::Starred, 0),
-                    ("📁 Archived", Page::Archived, 0),
-                    ("🗑 Trash", Page::Trash, app.trash_entries.len()),
-                    ("📬 Requests", Page::Requests, app.request_entries.len()),
-                    ("🚫 Junk", Page::Junk, app.junk_entries.len()),
-                ];
-
-                for (label, page, count) in &nav_items {
-                    let text = if *count > 0 {
-                        format!("{} {}", label, count)
-                    } else {
-                        label.to_string()
-                    };
-                    let is_selected = app.page == *page;
-                    if render_nav_item(ui, &text, is_selected).clicked() {
-                        app.page = page.clone();
-                    }
-                }
-
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(4.0);
-
-                if render_nav_item(ui, "👤 Contacts", app.page == Page::Contacts).clicked() {
-                    app.page = Page::Contacts;
-                }
-
-                ui.add_space(8.0);
-
-                if app.accounts.is_empty() {
-                    if ui.button("onboarding").clicked() {
-                        app.page = Page::OnboardingNewUser;
-                    }
-                } else if ui.button("+ Add Account").clicked() {
-                    let state = ui::add_account_window::AddAccountWindowState::default();
-                    app.state
-                        .add_account_window
-                        .insert(egui::Id::new(rand::random::<u32>()), state);
-                }
-
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                    ui.add_space(8.0);
-
-                    if !app.accounts.is_empty() {
-                        ui.label(
-                            RichText::new("Account:")
-                                .size(10.0)
-                                .color(style::TEXT_MUTED),
-                        );
-                        egui::ComboBox::from_id_salt("sidebar_account_selector")
-                            .selected_text(get_account_display_text(app))
-                            .width(ui.available_width() - 8.0)
-                            .show_ui(ui, |ui| {
-                                for account in app.accounts.clone() {
-                                    let display_text = get_account_summary_display_text(&account);
-                                    let is_selected = app.active_account_pubkey.as_deref()
-                                        == Some(&account.pubkey_hex);
-                                    if ui.selectable_label(is_selected, display_text).clicked() {
-                                        match app
-                                            .backend
-                                            .set_active_account(Some(account.pubkey_hex.clone()))
-                                        {
-                                            Ok(()) => {
-                                                app.active_account_pubkey = Some(account.pubkey_hex)
-                                            }
-                                            Err(e) => error!("Failed to select account: {}", e),
-                                        }
-                                    }
-                                }
-                            });
-                    }
-
-                    ui.add_space(4.0);
-
-                    if ui.add_sized([32.0, 32.0], egui::Button::new("⚙")).clicked() {
-                        app.page = Page::Settings;
-                    }
+            let top_frame = Frame::new()
+                .inner_margin(Margin {
+                    left: 16,
+                    right: 16,
+                    top: 18,
+                    bottom: 14,
+                })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("Hoot").size(17.0).strong().color(style::TEXT));
                 });
-            });
+            let bottom_y = top_frame.response.rect.bottom();
+            ui.painter().line_segment(
+                [
+                    egui::pos2(panel_rect.left(), bottom_y),
+                    egui::pos2(panel_rect.right(), bottom_y),
+                ],
+                egui::Stroke::new(1.0, style::border()),
+            );
+
+            egui::TopBottomPanel::bottom("sidebar_footer")
+                .exact_height(50.0)
+                .frame(
+                    Frame::new()
+                        .fill(style::SURFACE)
+                        .inner_margin(Margin::same(0)),
+                )
+                .show_inside(ui, |ui| {
+                    let r = ui.max_rect();
+                    ui.painter().line_segment(
+                        [r.left_top(), r.right_top()],
+                        egui::Stroke::new(1.0, style::border()),
+                    );
+                    let content_rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(r.left() + 12.0, r.top() + 10.0),
+                        egui::Vec2::new(r.width() - 24.0, 30.0),
+                    );
+                    let mut footer_ui = ui.new_child(egui::UiBuilder::new().max_rect(content_rect));
+                    footer_ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let (dot_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(7.0, 7.0), Sense::hover());
+                        ui.painter()
+                            .circle_filled(dot_rect.center(), 3.5, style::GREEN);
+
+                        let chip_w = (ui.available_width() - 30.0 - 8.0).max(20.0);
+                        let (chip_rect, chip_resp) =
+                            ui.allocate_exact_size(egui::Vec2::new(chip_w, 30.0), Sense::click());
+                        let chip_resp = chip_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        ui.painter().rect_filled(
+                            chip_rect,
+                            egui::CornerRadius::same(7),
+                            style::SURFACE2,
+                        );
+                        ui.painter().rect_stroke(
+                            chip_rect,
+                            egui::CornerRadius::same(7),
+                            egui::Stroke::new(1.0, style::border_strong()),
+                            egui::StrokeKind::Inside,
+                        );
+                        let account_text = get_account_display_text(app);
+                        let galley = ui.painter().layout(
+                            account_text,
+                            FontId::proportional(12.0),
+                            style::TEXT2,
+                            (chip_w - 16.0).max(0.0),
+                        );
+                        ui.painter().galley(
+                            egui::Pos2::new(
+                                chip_rect.left() + 8.0,
+                                chip_rect.center().y - galley.size().y / 2.0,
+                            ),
+                            galley,
+                            style::TEXT2,
+                        );
+                        if chip_resp.clicked() && !app.accounts.is_empty() {
+                            let next_pubkey = match app.active_account_pubkey.as_deref() {
+                                Some(current) => app
+                                    .accounts
+                                    .iter()
+                                    .position(|account| account.pubkey_hex == current)
+                                    .map(|idx| {
+                                        app.accounts[(idx + 1) % app.accounts.len()]
+                                            .pubkey_hex
+                                            .clone()
+                                    }),
+                                None => app
+                                    .accounts
+                                    .first()
+                                    .map(|account| account.pubkey_hex.clone()),
+                            };
+                            if let Some(pubkey) = next_pubkey {
+                                match app.backend.set_active_account(Some(pubkey.clone())) {
+                                    Ok(()) => app.active_account_pubkey = Some(pubkey),
+                                    Err(e) => error!("Failed to select account: {}", e),
+                                }
+                            }
+                        }
+
+                        if style::pointer(
+                            ui.add(
+                                egui::Button::new(
+                                    RichText::new("⚙").size(14.0).color(style::TEXT2),
+                                )
+                                .fill(style::SURFACE2)
+                                .stroke(egui::Stroke::new(1.0, style::border_strong()))
+                                .corner_radius(egui::CornerRadius::same(7))
+                                .min_size(egui::Vec2::new(30.0, 30.0)),
+                            ),
+                        )
+                        .clicked()
+                        {
+                            app.page = Page::Settings;
+                        }
+                    });
+                });
+
+            egui::ScrollArea::vertical()
+                .id_salt("sidebar_scroll")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    Frame::new()
+                        .inner_margin(Margin {
+                            left: 8,
+                            right: 8,
+                            top: 0,
+                            bottom: 0,
+                        })
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+
+                            ui.add_space(12.0);
+                            let compose_resp = style::pointer(
+                                ui.add_sized(
+                                    [ui.available_width(), 38.0],
+                                    egui::Button::new(
+                                        RichText::new("  ✏  Compose")
+                                            .color(Color32::WHITE)
+                                            .size(13.5),
+                                    )
+                                    .fill(style::ACCENT)
+                                    .corner_radius(egui::CornerRadius::same(10)),
+                                ),
+                            );
+                            if compose_resp.clicked() {
+                                let state = ui::compose_window::ComposeWindowState {
+                                    subject: String::new(),
+                                    to_field: String::new(),
+                                    content: String::new(),
+                                    parent_event_ids: Vec::new(),
+                                    selected_account_pubkey: app.active_account_pubkey.clone(),
+                                    selected_nip05: None,
+                                    minimized: false,
+                                    draft_id: None,
+                                    send_status: None,
+                                };
+                                app.state
+                                    .compose_window
+                                    .insert(egui::Id::new(rand::random::<u32>()), state);
+                            }
+                            ui.add_space(4.0);
+
+                            if render_nav_item_with_badge(
+                                ui,
+                                "✉",
+                                "Inbox",
+                                app.page == Page::Inbox,
+                                app.table_entries.len(),
+                            )
+                            .clicked()
+                            {
+                                app.page = Page::Inbox;
+                            }
+                            if render_nav_item_with_badge(
+                                ui,
+                                "✏",
+                                "Drafts",
+                                app.page == Page::Drafts,
+                                app.drafts.len(),
+                            )
+                            .clicked()
+                            {
+                                app.page = Page::Drafts;
+                            }
+                            if render_nav_item(ui, "★", "Starred", app.page == Page::Starred)
+                                .clicked()
+                            {
+                                app.page = Page::Starred;
+                            }
+                            if render_nav_item(ui, "☰", "Archived", app.page == Page::Archived)
+                                .clicked()
+                            {
+                                app.page = Page::Archived;
+                            }
+                            if render_nav_item_with_badge(
+                                ui,
+                                "⊗",
+                                "Trash",
+                                app.page == Page::Trash,
+                                app.trash_entries.len(),
+                            )
+                            .clicked()
+                            {
+                                app.page = Page::Trash;
+                            }
+
+                            ui.add_space(4.0);
+                            let (div_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 1.0),
+                                Sense::hover(),
+                            );
+                            ui.painter().line_segment(
+                                [div_rect.left_center(), div_rect.right_center()],
+                                egui::Stroke::new(1.0, style::border()),
+                            );
+                            ui.add_space(4.0);
+
+                            if render_nav_item_with_badge(
+                                ui,
+                                "◌",
+                                "Requests",
+                                app.page == Page::Requests,
+                                app.request_entries.len(),
+                            )
+                            .clicked()
+                            {
+                                app.page = Page::Requests;
+                            }
+                            if render_nav_item_with_badge(
+                                ui,
+                                "⊘",
+                                "Junk",
+                                app.page == Page::Junk,
+                                app.junk_entries.len(),
+                            )
+                            .clicked()
+                            {
+                                app.page = Page::Junk;
+                            }
+                            if render_nav_item(ui, "◎", "Contacts", app.page == Page::Contacts)
+                                .clicked()
+                            {
+                                app.page = Page::Contacts;
+                            }
+                            if render_nav_item(ui, "⚙", "Settings", app.page == Page::Settings)
+                                .clicked()
+                            {
+                                app.page = Page::Settings;
+                            }
+                        });
+                });
+
+            let divider_x = panel_rect.right() - 0.5;
+            ui.painter().line_segment(
+                [
+                    egui::pos2(divider_x, panel_rect.top()),
+                    egui::pos2(divider_x, panel_rect.bottom()),
+                ],
+                egui::Stroke::new(1.0, style::border()),
+            );
         });
 }
-
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
     let closed_account_windows: Vec<egui::Id> = app
         .state
@@ -309,7 +518,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         Page::Onboarding
         | Page::OnboardingNewUser
         | Page::OnboardingNewShowKey
-        | Page::OnboardingReturning => {}
+        | Page::OnboardingReturning
+        | Page::OnboardingRelay
+        | Page::OnboardingReady => {}
         _ => render_left_panel(app, ctx),
     }
 
@@ -318,7 +529,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         | Page::Onboarding
         | Page::OnboardingNewUser
         | Page::OnboardingNewShowKey
-        | Page::OnboardingReturning => {}
+        | Page::OnboardingReturning
+        | Page::OnboardingRelay
+        | Page::OnboardingReady => {}
         _ => ui::search::render_global_search_bar(app, ctx),
     }
 
@@ -336,7 +549,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         Page::Onboarding
         | Page::OnboardingNewUser
         | Page::OnboardingNewShowKey
-        | Page::OnboardingReturning => ui::onboarding::OnboardingScreen::ui(app, ui),
+        | Page::OnboardingReturning
+        | Page::OnboardingRelay
+        | Page::OnboardingReady => ui::onboarding::OnboardingScreen::ui(app, ui),
         _ => {
             ui.heading("This hasn't been implemented yet.");
         }

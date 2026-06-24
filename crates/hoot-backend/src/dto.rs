@@ -57,6 +57,12 @@ pub struct AccountSummary {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct AccountPreview {
+    pub summary: AccountSummary,
+    pub nsec: String,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct MailMessageDto {
     pub id: Option<String>,
     pub created_at: Option<i64>,

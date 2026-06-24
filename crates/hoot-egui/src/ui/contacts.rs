@@ -29,21 +29,7 @@ impl Contact {
     }
 
     pub fn initials(&self) -> String {
-        let fallback = self.best_name();
-        let mut initials = fallback
-            .split_whitespace()
-            .filter_map(|segment| segment.chars().next())
-            .map(|ch| ch.to_ascii_uppercase())
-            .take(2)
-            .collect::<String>();
-        if initials.is_empty() {
-            initials = fallback
-                .chars()
-                .take(2)
-                .map(|ch| ch.to_ascii_uppercase())
-                .collect();
-        }
-        initials
+        crate::style::initials_for_name(self.best_name())
     }
 
     pub fn picture_url(&self) -> Option<&str> {

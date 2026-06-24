@@ -132,4 +132,22 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn initializes_new_file_database() -> Result<()> {
+        let path = std::env::temp_dir().join(format!(
+            "hoot-test-{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+
+        let mut db = Db::new(path.clone())?;
+        db.unlock_with_password("test-password".to_string())?;
+        let saved_list = db.get_pubkeys()?;
+        assert!(saved_list.is_empty());
+
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
 }

@@ -1,7 +1,6 @@
 use eframe::egui::{self, RichText, Sense, Vec2b};
 use egui_extras::{Column, TableBuilder};
 
-use crate::profile_metadata::get_profile_metadata;
 use crate::style;
 use crate::Hoot;
 use crate::Page;
@@ -75,10 +74,7 @@ pub fn render_message_table(app: &mut Hoot, ui: &mut egui::Ui, entries: &[TableE
                     ui.checkbox(&mut false, "");
                 });
                 row.col(|ui| {
-                    let _ = get_profile_metadata(app, event.pubkey.clone());
-                    let label = app
-                        .resolve_name(&event.pubkey)
-                        .unwrap_or_else(|| event.pubkey.to_string());
+                    let (label, _) = crate::ui::resolve_avatar_info(app, &event.pubkey);
                     ui.label(RichText::new(label).strong());
                 });
                 row.col(|ui| {

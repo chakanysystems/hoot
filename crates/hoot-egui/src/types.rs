@@ -19,6 +19,8 @@ pub enum Page {
     OnboardingNewUser,
     OnboardingNewShowKey,
     OnboardingReturning,
+    OnboardingRelay,
+    OnboardingReady,
     Post,
     Contacts,
     Unlock,

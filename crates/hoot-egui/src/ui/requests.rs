@@ -2,7 +2,6 @@ use eframe::egui::{self, RichText, Sense, Vec2b};
 use egui_extras::{Column, TableBuilder};
 use tracing::error;
 
-use crate::profile_metadata::get_profile_metadata;
 use crate::style;
 use crate::Hoot;
 use crate::Page;
@@ -65,10 +64,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                     let event = &events[row.index()];
 
                     row.col(|ui| {
-                        let _ = get_profile_metadata(app, event.pubkey.clone());
-                        let label = app
-                            .resolve_name(&event.pubkey)
-                            .unwrap_or_else(|| event.pubkey.to_string());
+                        let (label, _) = crate::ui::resolve_avatar_info(app, &event.pubkey);
 
                         // Check for NIP-05 and show warning if unverified
                         let has_unverified_nip05 = match app.backend.get_cached_nip05(event.pubkey.clone()) {
