@@ -1,0 +1,29 @@
+[package]
+name = "hoot-backend"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+name = "hoot_backend"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+ewebsock.workspace = true
+include_dir.workspace = true
+keyring.workspace = true
+nostr.workspace = true
+pollster.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+rusqlite_migration.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uniffi.workspace = true

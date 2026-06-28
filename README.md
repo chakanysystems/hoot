@@ -21,18 +21,18 @@ Hoot is a native GUI application that provides email-like functionality over the
 git clone <repository-url>
 cd hoot
 
-# Build the project
-cargo build --release
+# Build the desktop app
+cargo build -p hoot-egui --release
 
-# Run the application
-cargo run --release
+# Run the desktop app (binary name remains `hoot`)
+cargo run -p hoot-egui --release
 ```
 
 ### Development Build
 
 ```bash
-cargo build
-cargo run
+cargo build -p hoot-egui
+cargo run -p hoot-egui
 ```
 
 ### Using Nix
@@ -50,7 +50,7 @@ nix develop
 Build with profiling support:
 
 ```bash
-cargo build --features profiling
+cargo build -p hoot-egui --features profiling
 ```
 
 ## License
