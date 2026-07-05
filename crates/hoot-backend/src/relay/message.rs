@@ -1,5 +1,4 @@
 use crate::error;
-use ewebsock::{WsEvent, WsMessage};
 use nostr::types::Filter;
 use nostr::Event;
 use serde::ser::SerializeSeq;
@@ -22,37 +21,6 @@ pub enum RelayMessage<'a> {
     Auth(&'a str),
 }
 
-#[derive(Debug)]
-pub enum RelayEvent<'a> {
-    Opened,
-    Closed,
-    Other(&'a WsMessage),
-    Error(error::Error),
-    Message(RelayMessage<'a>),
-}
-
-impl<'a> From<&'a WsEvent> for RelayEvent<'a> {
-    fn from(value: &'a WsEvent) -> Self {
-        match value {
-            WsEvent::Opened => RelayEvent::Opened,
-            WsEvent::Closed => RelayEvent::Closed,
-            WsEvent::Message(ws_msg) => ws_msg.into(),
-            WsEvent::Error(e) => RelayEvent::Error(error::Error::Generic(e.to_owned())),
-        }
-    }
-}
-
-impl<'a> From<&'a WsMessage> for RelayEvent<'a> {
-    fn from(value: &'a WsMessage) -> Self {
-        match value {
-            WsMessage::Text(s) => match RelayMessage::from_json(s).map(RelayEvent::Message) {
-                Ok(msg) => msg,
-                Err(err) => RelayEvent::Error(err),
-            },
-            value => RelayEvent::Other(value),
-        }
-    }
-}
 
 fn split_relay_array_fields(msg: &str) -> Option<Vec<&str>> {
     if !(msg.starts_with('[') && msg.ends_with(']')) {
@@ -206,9 +174,6 @@ pub enum ClientMessage {
         subscription_id: String,
         filters: Vec<Filter>,
     },
-    Close {
-        subscription_id: String,
-    },
     Auth {
         event: Event,
     },
@@ -245,12 +210,6 @@ impl Serialize for ClientMessage {
                 for filter in filters {
                     seq.serialize_element(filter)?;
                 }
-                seq.end()
-            }
-            ClientMessage::Close { subscription_id } => {
-                let mut seq = serializer.serialize_seq(Some(2))?;
-                seq.serialize_element("CLOSE")?;
-                seq.serialize_element(subscription_id)?;
                 seq.end()
             }
             ClientMessage::Auth { event } => {
@@ -616,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn client_message_serializes_req_close_event_and_auth_as_nip01_arrays() {
+    fn client_message_serializes_req_event_and_auth_as_nip01_arrays() {
         use nostr::{EventBuilder, Keys, Kind, RelayUrl};
         use serde_json::json;
 
@@ -629,12 +588,6 @@ mod tests {
         assert_eq!(req[0], "REQ");
         assert_eq!(req[1], "mailbox");
         assert_eq!(req[2]["kinds"], json!([1]));
-
-        let close = serde_json::to_value(&ClientMessage::Close {
-            subscription_id: "mailbox".to_string(),
-        })
-        .unwrap();
-        assert_eq!(close, json!(["CLOSE", "mailbox"]));
 
         let keys = Keys::generate();
         let event = EventBuilder::new(Kind::TextNote, "hello relay")

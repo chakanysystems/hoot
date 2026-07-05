@@ -80,6 +80,7 @@ impl Db {
         Ok(results)
     }
 
+    #[cfg(test)]
     pub fn is_known_sender(&self, pubkey: &str) -> Result<bool> {
         let count: i64 = self.connection.query_row(
             "SELECT COUNT(*) FROM (
@@ -93,6 +94,7 @@ impl Db {
         Ok(count > 0)
     }
 
+    #[cfg(test)]
     pub fn is_sender_junked(&self, pubkey: &str) -> Result<bool> {
         let count: i64 = self.connection.query_row(
             "SELECT COUNT(*) FROM sender_status WHERE pubkey = ?1 AND status = 'junked'",

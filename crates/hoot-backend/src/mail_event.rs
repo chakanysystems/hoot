@@ -21,57 +21,6 @@ pub struct MailMessage {
 }
 
 impl MailMessage {
-    pub fn to_events(&mut self, sending_keys: &Keys) -> HashMap<PublicKey, Event> {
-        let mut pubkeys_to_send_to: Vec<PublicKey> = Vec::new();
-        let mut tags: Vec<Tag> = Vec::new();
-
-        for pubkey in &self.to {
-            tags.push(Tag::public_key(*pubkey));
-            pubkeys_to_send_to.push(*pubkey);
-        }
-
-        for pubkey in &self.cc {
-            tags.push(Tag::custom(
-                TagKind::p(),
-                vec![pubkey.to_hex().as_str(), "cc"],
-            ));
-            pubkeys_to_send_to.push(*pubkey);
-        }
-
-        for pubkey in &self.bcc {
-            pubkeys_to_send_to.push(*pubkey);
-        }
-
-        if let Some(parent_events) = &self.parent_events {
-            for event in parent_events {
-                tags.push(Tag::event(*event));
-            }
-        }
-
-        // Add NIP-05 tag if sender has one
-        if let Some(nip05) = &self.sender_nip05 {
-            tags.push(Tag::custom(TagKind::custom("nip05"), vec![nip05.as_str()]));
-        }
-
-        tags.push(Tag::from_standardized(TagStandard::Subject(
-            self.subject.clone(),
-        )));
-
-        let base_event = EventBuilder::new(Kind::Custom(MAIL_EVENT_KIND), &self.content).tags(tags);
-
-        let mut event_list: HashMap<PublicKey, Event> = HashMap::new();
-        for pubkey in pubkeys_to_send_to {
-            // TODO: randomize gift wrap created_ats
-            let wrapped_event =
-                EventBuilder::gift_wrap(sending_keys, &pubkey, base_event.clone(), None)
-                    .block_on()
-                    .unwrap();
-            event_list.insert(pubkey, wrapped_event);
-        }
-
-        event_list
-    }
-
     pub fn try_to_events(
         &mut self,
         sending_keys: &Keys,
@@ -236,42 +185,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn to_events_wraps_to_recipients_like_the_fallible_variant() {
-        let sending_keys = Keys::generate();
-        let recipient_keys = Keys::generate();
-        let mut message = MailMessage {
-            id: None,
-            created_at: None,
-            author: None,
-            to: vec![recipient_keys.public_key()],
-            cc: Vec::new(),
-            bcc: Vec::new(),
-            parent_events: None,
-            subject: "Infallible subject".to_string(),
-            content: "infallible body".to_string(),
-            sender_nip05: None,
-        };
-
-        let events = message.to_events(&sending_keys);
-
-        assert_eq!(events.len(), 1);
-        let gift_wrap = events
-            .get(&recipient_keys.public_key())
-            .expect("recipient should receive a gift wrap");
-        assert_eq!(gift_wrap.kind, Kind::GiftWrap);
-        let rumor = unwrap_rumor(&recipient_keys, gift_wrap);
-        assert_eq!(rumor.pubkey, sending_keys.public_key());
-        assert_eq!(rumor.kind, Kind::Custom(MAIL_EVENT_KIND));
-        assert_eq!(rumor.content, "infallible body");
-        assert_eq!(
-            tags_named(&rumor, "subject"),
-            vec![vec![
-                "subject".to_string(),
-                "Infallible subject".to_string()
-            ]]
-        );
-    }
     #[test]
     fn try_to_events_returns_empty_map_for_empty_recipient_lists() {
         let sending_keys = Keys::generate();

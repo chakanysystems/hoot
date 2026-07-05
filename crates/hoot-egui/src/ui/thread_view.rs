@@ -1,8 +1,7 @@
 use eframe::egui::{
     self, Color32, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, Stroke,
 };
-use hoot_backend::{MailMessageDto, SenderStatusDto};
-use nostr::{PublicKey, ToBech32};
+use hoot_backend::{npub_string, MailMessageDto, SenderStatusDto};
 use tracing::error;
 
 use crate::profile_metadata::get_profile_metadata;
@@ -12,10 +11,7 @@ use crate::Hoot;
 use crate::Page;
 
 fn short_pubkey(pubkey: &str) -> String {
-    let npub = PublicKey::from_hex(pubkey)
-        .ok()
-        .and_then(|pk| pk.to_bech32().ok())
-        .unwrap_or_else(|| pubkey.to_string());
+    let npub = npub_string(pubkey).unwrap_or_else(|| pubkey.to_string());
     if npub.len() > 30 {
         format!("{}…", &npub[..30])
     } else {

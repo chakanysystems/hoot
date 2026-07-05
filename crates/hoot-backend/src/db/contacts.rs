@@ -108,6 +108,7 @@ impl Db {
     }
 
     /// Check if a pubkey is in the contacts table.
+    #[cfg(test)]
     pub fn is_contact(&self, pubkey: &str) -> Result<bool> {
         let count: i64 = self.connection.query_row(
             "SELECT COUNT(*) FROM contacts WHERE pubkey = ?1",
@@ -147,6 +148,7 @@ impl Db {
     }
 
     /// Get the petname for a given pubkey, if they are a contact.
+    #[cfg(test)]
     pub fn get_contact_petname(&self, pubkey: &str) -> Result<Option<String>> {
         let result: Option<Option<String>> = self
             .connection

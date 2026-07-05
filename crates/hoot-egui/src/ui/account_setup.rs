@@ -63,27 +63,6 @@ pub fn save_imported_account(
     )
 }
 
-pub fn generate_account(
-    app: &mut Hoot,
-    display_name: &str,
-    name: &str,
-    picture_url: &str,
-    publish_metadata: bool,
-) -> Result<AccountSummary, String> {
-    let account = app
-        .backend
-        .generate_account()
-        .map_err(|e| format!("Failed to generate key: {}", e))?;
-    finish_saved_account(
-        app,
-        account,
-        display_name,
-        name,
-        picture_url,
-        publish_metadata,
-    )
-}
-
 fn finish_saved_account(
     app: &mut Hoot,
     account: AccountSummary,

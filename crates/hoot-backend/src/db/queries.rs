@@ -230,6 +230,7 @@ ORDER BY le.created_at DESC
     }
 
     /// Get all event IDs for mail events
+    #[cfg(test)]
     pub fn get_mail_event_ids(&self) -> Result<Vec<String>> {
         let mut stmt = self.connection.prepare(
             "SELECT id FROM events

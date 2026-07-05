@@ -1,26 +1,12 @@
-use super::account_setup::AccountCreationMode;
 use crate::{style, Hoot, Page};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Vec2};
 use tracing::error;
 
 #[derive(Default)]
 pub struct OnboardingState {
-    pub secret_input: String,
-    pub secret_input_2: String,
-    pub mode: Option<AccountCreationMode>,
-    pub pending_account: Option<hoot_backend::AccountSummary>,
-    pub generated_account: Option<hoot_backend::AccountSummary>,
-    pub generated_nsec: Option<String>,
-    pub nsec_input: String,
-    pub display_name: String,
-    pub name: String,
-    pub picture_url: String,
-    pub metadata_fetched: bool,
-    pub publish_metadata: bool,
     pub key_saved: bool,
     pub relays: Vec<String>,
     pub relay_input: String,
-    pub error_string: String,
 }
 
 impl OnboardingState {
@@ -30,7 +16,6 @@ impl OnboardingState {
                 .iter()
                 .map(|url| (*url).to_string())
                 .collect(),
-            publish_metadata: true,
             ..Default::default()
         }
     }
@@ -60,7 +45,6 @@ impl OnboardingScreen {
                 match app.page {
                     Page::OnboardingNewUser => Self::render_new_user_steps(app, ui),
                     Page::OnboardingNewShowKey => render_show_key(app, ui),
-                    Page::OnboardingReturning => Self::render_returning_steps(app, ui),
                     Page::OnboardingRelay => render_relays(app, ui),
                     Page::OnboardingReady => render_ready(app, ui),
                     _ => {}
@@ -92,10 +76,6 @@ impl OnboardingScreen {
             .size(14.0)
             .color(style::TEXT2),
         );
-    }
-
-    fn render_returning_steps(app: &mut Hoot, ui: &mut egui::Ui) {
-        Self::render_new_user_steps(app, ui);
     }
 
     fn finish_onboarding(app: &mut Hoot) {
@@ -162,78 +142,79 @@ fn render_show_key(app: &mut Hoot, ui: &mut egui::Ui) {
     );
     ui.add_space(28.0);
 
-    if let (Some(account), Some(nsec)) = (
-        app.state.onboarding.generated_account.clone(),
-        app.state.onboarding.generated_nsec.clone(),
-    ) {
-        let mut npub_clone = account.npub;
-        ui.label(
-            RichText::new("Your address (share this freely)")
-                .size(12.0)
-                .strong()
-                .color(style::TEXT3),
-        );
-        ui.add_space(4.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut npub_clone)
-                .interactive(false)
-                .desired_width(360.0)
-                .font(egui::FontId::monospace(11.0)),
-        );
-        ui.add_space(20.0);
-
-        egui::Frame::new()
-            .fill(egui::Color32::from_rgb(254, 243, 199))
-            .corner_radius(CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(16))
-            .show(ui, |ui| {
-                ui.set_max_width(360.0);
-                ui.label(
-                    RichText::new("⚠  Private key — never share this")
-                        .size(12.0)
-                        .strong()
-                        .color(egui::Color32::from_rgb(146, 64, 14)),
-                );
-                ui.add_space(8.0);
-                let mut nsec_clone = nsec;
-                ui.add(
-                    egui::TextEdit::singleline(&mut nsec_clone)
-                        .interactive(false)
-                        .desired_width(328.0)
-                        .font(egui::FontId::monospace(11.0)),
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(
-                        "If you lose this key, your account cannot be recovered. Write it down somewhere safe.",
-                    )
-                    .size(12.0)
-                    .color(egui::Color32::from_rgb(146, 64, 14)),
-                );
-            });
-
-        ui.add_space(20.0);
-        style::pointer(ui.checkbox(
-            &mut app.state.onboarding.key_saved,
-            "I've saved my private key somewhere safe",
-        ));
-        ui.add_space(16.0);
-
-        if style::pointer(
-            ui.add_enabled(
-                app.state.onboarding.key_saved,
-                egui::Button::new(RichText::new("Continue").size(14.0).color(Color32::WHITE))
-                    .fill(style::ACCENT)
-                    .corner_radius(CornerRadius::same(10))
-                    .min_size(Vec2::new(240.0, 44.0)),
-            ),
-        )
-        .clicked()
+    let onboarding_window_id =
+        egui::Id::new(super::add_account_window::ONBOARDING_ADD_ACCOUNT_WINDOW_ID);
+    if let Some(state) = app.state.add_account_window.get(&onboarding_window_id) {
+        if let (Some(account), Some(nsec)) =
+            (state.generated_account.clone(), state.generated_nsec.clone())
         {
-            app.page = Page::OnboardingRelay;
+            let mut npub_clone = account.npub;
+            ui.label(
+                RichText::new("Your address (share this freely)")
+                    .size(12.0)
+                    .strong()
+                    .color(style::TEXT3),
+            );
+            ui.add_space(4.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut npub_clone)
+                    .interactive(false)
+                    .desired_width(360.0)
+                    .font(egui::FontId::monospace(11.0)),
+            );
+            ui.add_space(20.0);
+
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(254, 243, 199))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(egui::Margin::same(16))
+                .show(ui, |ui| {
+                    ui.set_max_width(360.0);
+                    ui.label(
+                        RichText::new("⚠  Private key — never share this")
+                            .size(12.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(146, 64, 14)),
+                    );
+                    ui.add_space(8.0);
+                    let mut nsec_clone = nsec;
+                    ui.add(
+                        egui::TextEdit::singleline(&mut nsec_clone)
+                            .interactive(false)
+                            .desired_width(328.0)
+                            .font(egui::FontId::monospace(11.0)),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(
+                            "If you lose this key, your account cannot be recovered. Write it down somewhere safe.",
+                        )
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(146, 64, 14)),
+                    );
+                });
+
+            ui.add_space(20.0);
+            style::pointer(ui.checkbox(
+                &mut app.state.onboarding.key_saved,
+                "I've saved my private key somewhere safe",
+            ));
+            ui.add_space(16.0);
+
+            if style::pointer(
+                ui.add_enabled(
+                    app.state.onboarding.key_saved,
+                    egui::Button::new(RichText::new("Continue").size(14.0).color(Color32::WHITE))
+                        .fill(style::ACCENT)
+                        .corner_radius(CornerRadius::same(10))
+                        .min_size(Vec2::new(240.0, 44.0)),
+                ),
+            )
+            .clicked()
+            {
+                app.page = Page::OnboardingRelay;
+            }
         }
-    } else if style::pointer(ui.button("← Back")).clicked() {
-        app.page = Page::OnboardingNewUser;
     }
 }
 

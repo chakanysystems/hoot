@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::collections::HashSet;
 
 use super::Db;
@@ -397,6 +398,7 @@ impl Db {
         Ok(wrap_ids)
     }
 
+    #[cfg(test)]
     pub fn get_trashed_event_ids(&self, event_ids: &[String]) -> Result<HashSet<String>> {
         let mut trashed = HashSet::new();
         if event_ids.is_empty() {

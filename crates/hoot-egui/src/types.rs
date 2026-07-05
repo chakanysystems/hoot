@@ -14,17 +14,28 @@ pub enum Page {
     Requests,
     Junk,
     Settings,
-    // TODO: fix this mess
     Onboarding,
     OnboardingNewUser,
     OnboardingNewShowKey,
-    OnboardingReturning,
     OnboardingRelay,
     OnboardingReady,
     Post,
     Contacts,
     Unlock,
     SearchResults,
+}
+
+impl Page {
+    /// Returns true for app pages that show the sidebar + search bar.
+    /// Onboarding and unlock are full-screen flows without chrome.
+    pub fn shows_chrome(&self) -> bool {
+        matches!(
+            self,
+            Page::Inbox | Page::Drafts | Page::Starred | Page::Archived
+                | Page::Trash | Page::Requests | Page::Junk | Page::Contacts
+                | Page::Settings | Page::Post | Page::SearchResults
+        )
+    }
 }
 
 // for storing the state of different components and such.
@@ -34,7 +45,7 @@ pub struct HootState {
     pub compose_window: HashMap<egui::Id, ui::compose_window::ComposeWindowState>,
     pub onboarding: ui::onboarding::OnboardingState,
     pub settings: ui::settings::SettingsState,
-    pub unlock_database: ui::unlock_database::UnlockDatabaseState,
+    pub unlock_window: HashMap<egui::Id, ui::unlock_window::UnlockWindowState>,
     pub contacts: ContactsPageState,
     pub requests: RequestsPageState,
     pub search: SearchState,

@@ -2163,7 +2163,6 @@ dependencies = [
  "egui_extras",
  "hoot-backend",
  "image",
- "nostr",
  "puffin",
  "puffin_http",
  "rand 0.8.5",

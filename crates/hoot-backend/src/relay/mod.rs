@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use tracing::{debug, error, info};
 
 mod pool;
-pub use pool::{RelayPool, RELAY_RECONNECT_SECONDS};
+pub use pool::RelayPool;
 
 mod message;
 pub use message::{ClientMessage, RelayMessage};

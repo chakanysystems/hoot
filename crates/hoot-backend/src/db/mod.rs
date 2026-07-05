@@ -35,6 +35,7 @@ impl Db {
         Ok(Self { connection: conn })
     }
 
+    #[cfg(test)]
     pub fn new_in_memory() -> Result<Self> {
         let mut conn = Connection::open_in_memory()?;
 
@@ -53,6 +54,7 @@ impl Db {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn is_unlocked(&self) -> bool {
         // Try a simple query to check if the database is unlocked
         // If the database is locked, this will fail

@@ -436,7 +436,3 @@ fn underline_text_edit_impl(
 
 // Compatibility aliases for split-layout UI modules that still use the pre-redesign names.
 pub const ACCENT_LIGHT: Color32 = Color32::from_rgb(232, 224, 245);
-pub const SIDEBAR_BG: Color32 = SURFACE;
-pub const TEXT_MUTED: Color32 = TEXT3;
-pub const CARD_BG: Color32 = SURFACE;
-pub const CARD_STROKE: Color32 = Color32::from_rgb(220, 218, 225);

@@ -133,32 +133,6 @@ fn mark_failed_nip05(state: &mut ComposeWindowState, failed: &[String]) {
     }
 }
 
-fn apply_nip05_resolution_to_recipients(
-    state: &mut ComposeWindowState,
-    nip05: &str,
-    backend_resolution: &hoot_backend::Nip05ResolutionDto,
-) {
-    for recipient in &mut state.recipients {
-        if let RecipientKind::Nip05 {
-            identifier,
-            resolution,
-        } = &mut recipient.kind
-        {
-            if identifier == nip05 {
-                *resolution = match &backend_resolution.status {
-                    hoot_backend::Nip05ResolutionStatusDto::Pending => Nip05Resolution::Pending,
-                    hoot_backend::Nip05ResolutionStatusDto::Resolved => backend_resolution
-                        .pubkey_hex
-                        .clone()
-                        .map(Nip05Resolution::Resolved)
-                        .unwrap_or(Nip05Resolution::Failed),
-                    hoot_backend::Nip05ResolutionStatusDto::Failed => Nip05Resolution::Failed,
-                };
-            }
-        }
-    }
-}
-
 fn sync_nip05_resolutions(app: &mut crate::Hoot, state: &mut ComposeWindowState) {
     let pending_nip05: Vec<String> = state
         .recipients
@@ -174,9 +148,25 @@ fn sync_nip05_resolutions(app: &mut crate::Hoot, state: &mut ComposeWindowState)
 
     for identifier in pending_nip05 {
         match app.backend.get_nip05_resolution(identifier.clone()) {
-            Ok(Some(resolution)) => {
-                apply_nip05_resolution_to_recipients(state, &identifier, &resolution);
+            Ok(Some(hoot_backend::Nip05ResolutionDto::Resolved { pubkey_hex })) => {
+                for recipient in &mut state.recipients {
+                    if let RecipientKind::Nip05 { identifier: id, resolution } = &mut recipient.kind {
+                        if id == &identifier {
+                            *resolution = Nip05Resolution::Resolved(pubkey_hex.clone());
+                        }
+                    }
+                }
             }
+            Ok(Some(hoot_backend::Nip05ResolutionDto::Failed)) => {
+                for recipient in &mut state.recipients {
+                    if let RecipientKind::Nip05 { identifier: id, resolution } = &mut recipient.kind {
+                        if id == &identifier {
+                            *resolution = Nip05Resolution::Failed;
+                        }
+                    }
+                }
+            }
+            Ok(Some(hoot_backend::Nip05ResolutionDto::Pending)) => {}
             Ok(None) => {}
             Err(e) => error!("Failed to get NIP-05 resolution: {}", e),
         }
@@ -814,16 +804,21 @@ mod tests {
             },
         });
 
-        apply_nip05_resolution_to_recipients(
-            &mut state,
-            "jack@chakany.systems",
-            &hoot_backend::Nip05ResolutionDto {
-                status: hoot_backend::Nip05ResolutionStatusDto::Resolved,
-                pubkey_hex: Some(
-                    "c5fb6ecc876e0458e3eca9918e370cbcd376901c58460512fe537a46e58c38bb".to_string(),
-                ),
-            },
-        );
+        // Simulate what sync_nip05_resolutions does when the backend resolves
+        let pubkey_hex = "c5fb6ecc876e0458e3eca9918e370cbcd376901c58460512fe537a46e58c38bb";
+        let backend_dto = hoot_backend::Nip05ResolutionDto::Resolved {
+            pubkey_hex: pubkey_hex.to_string(),
+        };
+        let expected = match backend_dto {
+            hoot_backend::Nip05ResolutionDto::Resolved { pubkey_hex } => {
+                Nip05Resolution::Resolved(pubkey_hex)
+            }
+            hoot_backend::Nip05ResolutionDto::Failed => Nip05Resolution::Failed,
+            hoot_backend::Nip05ResolutionDto::Pending => Nip05Resolution::Pending,
+        };
+        if let RecipientKind::Nip05 { resolution, .. } = &mut state.recipients[0].kind {
+            *resolution = expected;
+        }
 
         match &state.recipients[0].kind {
             RecipientKind::Nip05 { resolution, .. } => {

@@ -30,10 +30,6 @@ impl RelayPool {
         }
     }
 
-    pub fn get_last_reconnect_attempt(&mut self) -> Instant {
-        return self.last_reconnect_attempt;
-    }
-
     pub fn keepalive(&mut self, wake_up: impl Fn() + Send + Sync + Clone + 'static) {
         let now = Instant::now();
 
@@ -184,13 +180,6 @@ impl RelayPool {
             if relay.status == RelayStatus::Connected {
                 relay.send(message.clone())?;
             }
-        }
-        Ok(())
-    }
-
-    pub fn ping_all(&mut self) -> Result<()> {
-        for relay in self.relays.values_mut() {
-            relay.ping();
         }
         Ok(())
     }

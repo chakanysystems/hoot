@@ -1,5 +1,5 @@
 use super::account_setup::AccountCreationMode;
-use crate::{style, HootStatus, Page};
+use crate::{style, Page};
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
 use hoot_backend::AccountSummary;
 use tracing::{error, info};
@@ -66,27 +66,16 @@ impl Default for AddAccountWindowState {
 pub struct AddAccountWindow {}
 
 pub const ONBOARDING_ADD_ACCOUNT_WINDOW_ID: &str = "onboarding_add_account_window";
-pub const UNLOCK_DATABASE_WINDOW_ID: &str = "unlock_database_window";
 
 impl AddAccountWindow {
     /// Main rendering function - returns false if window should be closed
     pub fn show_window(app: &mut crate::Hoot, ctx: &egui::Context, id: egui::Id) -> bool {
         let is_onboarding = id == egui::Id::new(ONBOARDING_ADD_ACCOUNT_WINDOW_ID);
-        let is_unlock = id == egui::Id::new(UNLOCK_DATABASE_WINDOW_ID);
         let mut keep_open = true;
         let mut close_clicked = false;
         let mut should_close_from_save = false;
-        let screen_rect = ctx.viewport_rect();
-        let window_width = if is_unlock {
-            (screen_rect.width() - 64.0).min(720.0).max(560.0)
-        } else {
-            620.0
-        };
-        let window_height = if is_unlock {
-            (screen_rect.height() - 64.0).min(760.0).max(480.0)
-        } else {
-            540.0
-        };
+        let window_width = 620.0;
+        let window_height = 540.0;
 
         let window = egui::Window::new("add_account_window")
             .id(id)
@@ -106,14 +95,10 @@ impl AddAccountWindow {
         window.open(&mut keep_open).show(ctx, |ui| {
                 ui.set_min_width(560.0);
                 ui.vertical(|ui| {
-                    if !is_unlock {
-                        Self::render_window_header(ui, &mut close_clicked, is_onboarding, is_unlock);
-                        ui.add_space(4.0);
-                    } else {
-                        ui.add_space(16.0);
-                    }
+                    Self::render_window_header(ui, &mut close_clicked, is_onboarding);
+                    ui.add_space(4.0);
 
-                    let content_width = if is_unlock { 640.0 } else { 572.0 };
+                    let content_width = 572.0;
                     ui.horizontal(|ui| {
                         ui.add_space(24.0);
                         ui.vertical(|ui| {
@@ -129,7 +114,6 @@ impl AddAccountWindow {
                                     db_file_has_password,
                                     state,
                                     is_onboarding,
-                                    is_unlock,
                                 );
                             }
 
@@ -141,9 +125,7 @@ impl AddAccountWindow {
                                 .unwrap_or(AccountCreationStep::ModeSelection);
 
                             ui.label(
-                                RichText::new(if is_unlock {
-                                    "Unlock Hoot"
-                                } else if is_onboarding {
+                                RichText::new(if is_onboarding {
                                     "Create your first identity"
                                 } else {
                                     "Add an account"
@@ -153,9 +135,7 @@ impl AddAccountWindow {
                                     .color(style::TEXT),
                             );
                             ui.add_space(4.0);
-                            let subtitle = if is_unlock {
-                                "Enter your database password to continue."
-                            } else if is_onboarding {
+                            let subtitle = if is_onboarding {
                                 match current_step {
                                     AccountCreationStep::DatabaseSetup => {
                                         "Create a database password to protect your local data."
@@ -186,10 +166,8 @@ impl AddAccountWindow {
                             );
                             ui.add_space(18.0);
 
-                            if !is_unlock {
-                                Self::render_step_indicator_for_step(ui, &current_step, is_onboarding);
-                                ui.add_space(18.0);
-                            }
+                            Self::render_step_indicator_for_step(ui, &current_step, is_onboarding);
+                            ui.add_space(18.0);
 
                             if let Some(error) = app
                                 .state
@@ -206,7 +184,7 @@ impl AddAccountWindow {
                                     Self::render_database_setup_step(app, ui, id, is_onboarding)
                                 }
                                 AccountCreationStep::DatabaseUnlock => {
-                                    if Self::render_database_unlock_step(app, ui, id, is_onboarding, is_unlock) {
+                                    if Self::render_database_unlock_step(app, ui, id, is_onboarding) {
                                         should_close_from_save = true;
                                     }
                                 }
@@ -240,7 +218,7 @@ impl AddAccountWindow {
         if is_onboarding
             && !matches!(
                 app.page,
-                Page::OnboardingNewUser | Page::OnboardingReturning
+                Page::OnboardingNewUser
             )
         {
             return false;
@@ -253,7 +231,6 @@ impl AddAccountWindow {
         ui: &mut egui::Ui,
         close_clicked: &mut bool,
         is_onboarding: bool,
-        is_unlock: bool,
     ) {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
@@ -269,7 +246,7 @@ impl AddAccountWindow {
                             .color(style::TEXT),
                     );
 
-                    if !is_unlock && !is_onboarding {
+                    if !is_onboarding {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if style::pointer(ui.add(Self::secondary_button("Close"))).clicked() {
                                 *close_clicked = true;
@@ -384,12 +361,7 @@ impl AddAccountWindow {
         db_file_has_password: bool,
         state: &mut AddAccountWindowState,
         is_onboarding: bool,
-        is_unlock: bool,
     ) {
-        if is_unlock {
-            state.step = AccountCreationStep::DatabaseUnlock;
-            return;
-        }
 
         if !is_onboarding {
             if matches!(
@@ -531,7 +503,6 @@ impl AddAccountWindow {
         ui: &mut egui::Ui,
         id: egui::Id,
         is_onboarding: bool,
-        is_unlock: bool,
     ) -> bool {
         let mut password = app
             .state
@@ -577,13 +548,7 @@ impl AddAccountWindow {
                         state.db_password_input.clear();
                         state.error_message = None;
 
-                        if is_unlock {
-                            app.status = HootStatus::Initializing;
-                            app.page = Page::Inbox;
-                            should_close = true;
-                        } else {
-                            state.step = AccountCreationStep::ModeSelection;
-                        }
+                        state.step = AccountCreationStep::ModeSelection;
                     }
                     Err(e) => {
                         error!("Failed to unlock database: {}", e);
@@ -595,7 +560,6 @@ impl AddAccountWindow {
             }
 
             if is_onboarding
-                && !is_unlock
                 && style::pointer(ui.add(Self::secondary_button("Back"))).clicked()
             {
                 app.page = Page::Onboarding;
@@ -1030,7 +994,15 @@ impl AddAccountWindow {
                     Ok(_) => {
                         info!("Account saved successfully");
                         if id == egui::Id::new(ONBOARDING_ADD_ACCOUNT_WINDOW_ID) {
-                            app.page = Page::OnboardingRelay;
+                            let is_generate = matches!(
+                                app.state.add_account_window.get(&id).unwrap().mode,
+                                Some(AccountCreationMode::Generate)
+                            );
+                            app.page = if is_generate {
+                                Page::OnboardingNewShowKey
+                            } else {
+                                Page::OnboardingRelay
+                            };
                         }
                         should_close = true;
                     }

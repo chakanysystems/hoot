@@ -487,14 +487,17 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
         });
 }
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
-    let unlock_window_id = egui::Id::new(ui::add_account_window::UNLOCK_DATABASE_WINDOW_ID);
+    let unlock_window_id = egui::Id::new(ui::unlock_window::UNLOCK_WINDOW_ID);
     if app.page == Page::Unlock {
         app.state
-            .add_account_window
+            .unlock_window
             .entry(unlock_window_id)
-            .or_insert_with(ui::add_account_window::AddAccountWindowState::default);
+            .or_insert_with(Default::default);
     } else {
-        app.state.add_account_window.remove(&unlock_window_id);
+        app.state.unlock_window.remove(&unlock_window_id);
+    }
+    if !ui::unlock_window::UnlockWindow::show_window(app, ctx, unlock_window_id) {
+        app.state.unlock_window.remove(&unlock_window_id);
     }
 
     let closed_account_windows: Vec<egui::Id> = app
@@ -528,7 +531,6 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         Page::Onboarding
         | Page::OnboardingNewUser
         | Page::OnboardingNewShowKey
-        | Page::OnboardingReturning
         | Page::OnboardingRelay
         | Page::OnboardingReady => {}
         _ => render_left_panel(app, ctx),
@@ -539,8 +541,6 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         | Page::Onboarding
         | Page::OnboardingNewUser
         | Page::OnboardingNewShowKey
-        | Page::OnboardingReturning
-        | Page::OnboardingRelay
         | Page::OnboardingReady => {}
         _ => ui::search::render_global_search_bar(app, ctx),
     }
@@ -559,7 +559,6 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         Page::Onboarding
         | Page::OnboardingNewUser
         | Page::OnboardingNewShowKey
-        | Page::OnboardingReturning
         | Page::OnboardingRelay
         | Page::OnboardingReady => ui::onboarding::OnboardingScreen::ui(app, ui),
         _ => {
@@ -606,16 +605,7 @@ impl Hoot {
 
     fn apply_snapshot(&mut self, snapshot: InitialSnapshot) {
         self.accounts = snapshot.accounts;
-        self.active_account_pubkey = self
-            .accounts
-            .iter()
-            .find(|account| account.is_active)
-            .map(|account| account.pubkey_hex.clone())
-            .or_else(|| {
-                self.accounts
-                    .first()
-                    .map(|account| account.pubkey_hex.clone())
-            });
+        self.active_account_pubkey = active_account_pubkey(&self.accounts);
         self.table_entries = snapshot.inbox;
         self.trash_entries = snapshot.trash;
         self.request_entries = snapshot.requests;
@@ -675,16 +665,7 @@ impl Hoot {
         match self.backend.list_accounts() {
             Ok(accounts) => {
                 self.accounts = accounts;
-                self.active_account_pubkey = self
-                    .accounts
-                    .iter()
-                    .find(|account| account.is_active)
-                    .map(|account| account.pubkey_hex.clone())
-                    .or_else(|| {
-                        self.accounts
-                            .first()
-                            .map(|account| account.pubkey_hex.clone())
-                    });
+                self.active_account_pubkey = active_account_pubkey(&self.accounts);
             }
             Err(e) => error!("Failed to load accounts: {}", e),
         }
@@ -756,6 +737,14 @@ impl Hoot {
         }
         None
     }
+}
+
+fn active_account_pubkey(accounts: &[AccountSummary]) -> Option<String> {
+    accounts
+        .iter()
+        .find(|account| account.is_active)
+        .map(|account| account.pubkey_hex.clone())
+        .or_else(|| accounts.first().map(|account| account.pubkey_hex.clone()))
 }
 
 #[cfg(test)]

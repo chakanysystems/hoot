@@ -103,6 +103,7 @@ impl Db {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn get_draft_count(&self) -> Result<i64> {
         let count: i64 = self
             .connection

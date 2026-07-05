@@ -94,16 +94,10 @@ pub struct SendMessageResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
-pub enum Nip05ResolutionStatusDto {
+pub enum Nip05ResolutionDto {
     Pending,
-    Resolved,
+    Resolved { pubkey_hex: String },
     Failed,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct Nip05ResolutionDto {
-    pub status: Nip05ResolutionStatusDto,
-    pub pubkey_hex: Option<String>,
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
