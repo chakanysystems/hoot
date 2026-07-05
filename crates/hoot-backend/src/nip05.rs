@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{
+    mpsc::{Receiver, Sender},
+    Arc,
+};
 use std::thread;
 use tracing::{debug, error, warn};
 
@@ -47,7 +50,12 @@ impl Nip05Verifier {
 
     /// Enqueue a NIP-05 identifier for background verification.
     /// Deduplicates requests — if this (pubkey, nip05) pair is already in flight, does nothing.
-    pub fn request(&mut self, nip05: String, pubkey_hex: String) {
+    pub fn request(
+        &mut self,
+        nip05: String,
+        pubkey_hex: String,
+        wake_up: Arc<dyn Fn() + Send + Sync + 'static>,
+    ) {
         let key = format!("{}:{}", pubkey_hex, nip05);
         if self.pending.contains(&key) {
             return;
@@ -71,6 +79,7 @@ impl Nip05Verifier {
             {
                 debug!("NIP-05 verification receiver dropped");
             }
+            wake_up();
         });
     }
 
@@ -144,7 +153,7 @@ impl Nip05Resolver {
 
     /// Enqueue a NIP-05 identifier for background resolution.
     /// Does nothing if this identifier is already pending or resolved.
-    pub fn request(&mut self, nip05: String) {
+    pub fn request(&mut self, nip05: String, wake_up: Arc<dyn Fn() + Send + Sync + 'static>) {
         if self.results.contains_key(&nip05) || self.pending.contains(&nip05) {
             return;
         }
@@ -171,6 +180,7 @@ impl Nip05Resolver {
                 nip05: nip05_clone,
                 pubkey_hex,
             });
+            wake_up();
         });
     }
 
@@ -381,5 +391,22 @@ mod tests {
                 "expected {token:?} to be rejected"
             );
         }
+    }
+
+    #[test]
+    fn resolver_wakes_app_when_resolution_finishes() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let wake_up = std::sync::Arc::new(move || {
+            let _ = sender.send(());
+        });
+        let mut resolver = Nip05Resolver::new();
+
+        resolver.request("not-a-nip05".to_string(), wake_up);
+
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("resolver should wake the app when a resolution finishes");
+        assert!(resolver.process_queue());
+        assert_eq!(resolver.get("not-a-nip05"), Some(&Nip05Resolution::Failed));
     }
 }

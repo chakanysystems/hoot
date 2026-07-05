@@ -133,6 +133,56 @@ fn mark_failed_nip05(state: &mut ComposeWindowState, failed: &[String]) {
     }
 }
 
+fn apply_nip05_resolution_to_recipients(
+    state: &mut ComposeWindowState,
+    nip05: &str,
+    backend_resolution: &hoot_backend::Nip05ResolutionDto,
+) {
+    for recipient in &mut state.recipients {
+        if let RecipientKind::Nip05 {
+            identifier,
+            resolution,
+        } = &mut recipient.kind
+        {
+            if identifier == nip05 {
+                *resolution = match &backend_resolution.status {
+                    hoot_backend::Nip05ResolutionStatusDto::Pending => Nip05Resolution::Pending,
+                    hoot_backend::Nip05ResolutionStatusDto::Resolved => backend_resolution
+                        .pubkey_hex
+                        .clone()
+                        .map(Nip05Resolution::Resolved)
+                        .unwrap_or(Nip05Resolution::Failed),
+                    hoot_backend::Nip05ResolutionStatusDto::Failed => Nip05Resolution::Failed,
+                };
+            }
+        }
+    }
+}
+
+fn sync_nip05_resolutions(app: &mut crate::Hoot, state: &mut ComposeWindowState) {
+    let pending_nip05: Vec<String> = state
+        .recipients
+        .iter()
+        .filter_map(|recipient| match &recipient.kind {
+            RecipientKind::Nip05 {
+                identifier,
+                resolution: Nip05Resolution::Pending,
+            } => Some(identifier.clone()),
+            _ => None,
+        })
+        .collect();
+
+    for identifier in pending_nip05 {
+        match app.backend.get_nip05_resolution(identifier.clone()) {
+            Ok(Some(resolution)) => {
+                apply_nip05_resolution_to_recipients(state, &identifier, &resolution);
+            }
+            Ok(None) => {}
+            Err(e) => error!("Failed to get NIP-05 resolution: {}", e),
+        }
+    }
+}
+
 fn send_message(app: &mut crate::Hoot, state: &mut ComposeWindowState) -> ComposePanelOutput {
     if !flush_pending_recipient_input(app, state) {
         return ComposePanelOutput::default();
@@ -275,6 +325,8 @@ pub fn render_panel(
                 .map(|account| account.pubkey_hex.clone())
         });
     }
+
+    sync_nip05_resolutions(app, state);
 
     let mut output = ComposePanelOutput::default();
     let mut draft_action = DraftAction::None;
@@ -748,6 +800,37 @@ mod tests {
                 hoot_backend::parse_recipient_token(token).is_none(),
                 "expected {token:?} to be rejected by backend recipient parser"
             );
+        }
+    }
+
+    #[test]
+    fn compose_updates_nip05_chip_when_backend_resolution_completes() {
+        let mut state = empty_state_with_input("");
+        state.recipients.push(Recipient {
+            raw: "jack@chakany.systems".to_string(),
+            kind: RecipientKind::Nip05 {
+                identifier: "jack@chakany.systems".to_string(),
+                resolution: Nip05Resolution::Pending,
+            },
+        });
+
+        apply_nip05_resolution_to_recipients(
+            &mut state,
+            "jack@chakany.systems",
+            &hoot_backend::Nip05ResolutionDto {
+                status: hoot_backend::Nip05ResolutionStatusDto::Resolved,
+                pubkey_hex: Some(
+                    "c5fb6ecc876e0458e3eca9918e370cbcd376901c58460512fe537a46e58c38bb".to_string(),
+                ),
+            },
+        );
+
+        match &state.recipients[0].kind {
+            RecipientKind::Nip05 { resolution, .. } => {
+                assert!(matches!(resolution, Nip05Resolution::Resolved(pubkey)
+                    if pubkey == "c5fb6ecc876e0458e3eca9918e370cbcd376901c58460512fe537a46e58c38bb"));
+            }
+            other => panic!("expected NIP-05 recipient, got {other:?}"),
         }
     }
 

@@ -441,7 +441,8 @@ impl HootBackend {
             .db
             .add_nip05(&pubkey, &nip05, is_own)
             .map_err(database_error)?;
-        inner.nip05_verifier.request(nip05, pubkey);
+        let wake_up = inner.wake_up.clone();
+        inner.nip05_verifier.request(nip05, pubkey, wake_up);
         Ok(())
     }
 
@@ -455,8 +456,30 @@ impl HootBackend {
 
     pub fn request_nip05_resolution(&self, nip05: String) -> HootResult<()> {
         let mut inner = self.lock_inner()?;
-        inner.nip05_resolver.request(nip05);
+        let wake_up = inner.wake_up.clone();
+        inner.nip05_resolver.request(nip05, wake_up);
         Ok(())
+    }
+
+    pub fn get_nip05_resolution(&self, nip05: String) -> HootResult<Option<Nip05ResolutionDto>> {
+        let inner = self.lock_inner()?;
+        let Some(resolution) = inner.nip05_resolver.get(&nip05) else {
+            return Ok(None);
+        };
+        Ok(Some(match resolution {
+            Nip05Resolution::Pending => Nip05ResolutionDto {
+                status: Nip05ResolutionStatusDto::Pending,
+                pubkey_hex: None,
+            },
+            Nip05Resolution::Resolved(pubkey_hex) => Nip05ResolutionDto {
+                status: Nip05ResolutionStatusDto::Resolved,
+                pubkey_hex: Some(pubkey_hex.clone()),
+            },
+            Nip05Resolution::Failed => Nip05ResolutionDto {
+                status: Nip05ResolutionStatusDto::Failed,
+                pubkey_hex: None,
+            },
+        }))
     }
 
     pub fn get_profile_metadata(&self, pubkey_hex: String) -> HootResult<Option<ProfileMetadata>> {
@@ -946,7 +969,10 @@ fn resolve_recipients(inner: &mut BackendInner, to_field: &str) -> HootResult<Re
                 Some(Nip05Resolution::Pending) => pending_nip05.push(raw_recipient.to_string()),
                 Some(Nip05Resolution::Failed) => failed_nip05.push(raw_recipient.to_string()),
                 None => {
-                    inner.nip05_resolver.request(raw_recipient.to_string());
+                    let wake_up = inner.wake_up.clone();
+                    inner
+                        .nip05_resolver
+                        .request(raw_recipient.to_string(), wake_up);
                     pending_nip05.push(raw_recipient.to_string());
                 }
             }
@@ -1064,9 +1090,10 @@ fn cache_and_verify_nip05(
         .db
         .add_nip05(pubkey_hex, nip05, is_own)
         .map_err(database_error)?;
+    let wake_up = inner.wake_up.clone();
     inner
         .nip05_verifier
-        .request(nip05.to_string(), pubkey_hex.to_string());
+        .request(nip05.to_string(), pubkey_hex.to_string(), wake_up);
     Ok(())
 }
 
