@@ -12,6 +12,12 @@ pub use message::{ClientMessage, RelayMessage};
 mod subscription;
 pub use subscription::Subscription;
 
+const DEFAULT_RELAY_URLS: [&str; 2] = ["wss://relay.chakany.systems", "wss://talon.quest"];
+
+pub fn default_relay_urls() -> &'static [&'static str] {
+    &DEFAULT_RELAY_URLS
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum RelayStatus {
     Connecting,
@@ -112,5 +118,18 @@ impl Relay {
                 self.status = RelayStatus::Disconnected;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_bootstrap_policy_returns_product_relays_in_stable_order() {
+        assert_eq!(
+            default_relay_urls(),
+            &["wss://relay.chakany.systems", "wss://talon.quest"]
+        );
     }
 }

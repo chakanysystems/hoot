@@ -1,17 +1,21 @@
-pub mod account_manager;
-pub mod backend;
-pub mod db;
-pub mod dto;
-pub mod error;
-pub mod mail_event;
-pub mod nip05;
-pub mod profile_metadata;
-pub mod relay;
-pub mod threaded_event;
+mod account_manager;
+mod backend;
+mod db;
+mod dto;
+mod error;
+mod mail_event;
+mod nip05;
+mod profile_metadata;
+mod recipient;
+mod relay;
+mod threaded_event;
 
 pub use backend::HootBackend;
 pub use dto::*;
 pub use error::{HootError, HootResult};
+pub use profile_metadata::ProfileOption;
+pub use recipient::{normalize_nip05_identifier, parse_recipient_token, ParsedRecipient};
+pub use relay::default_relay_urls;
 
 #[cfg(debug_assertions)]
 pub const STORAGE_NAME: &str = "systems.chakany.hoot-dev";

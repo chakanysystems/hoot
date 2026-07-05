@@ -557,13 +557,12 @@ fn render_identity(app: &mut Hoot, ui: &mut egui::Ui) {
             }
             if verify_clicked && !new_nip05_value.is_empty() {
                 let mut state = nip05_state.borrow_mut();
-                if !looks_like_nip05(&new_nip05_value) {
+                let Some(nip05) = hoot_backend::normalize_nip05_identifier(&new_nip05_value) else {
                     state.verification_error =
                         Some("Invalid NIP-05 format. Use: user@domain.com".to_string());
-                } else if let Err(e) =
-                    app.backend
-                        .add_nip05(pk_hex.clone(), new_nip05_value.clone(), true)
-                {
+                    return;
+                };
+                if let Err(e) = app.backend.add_nip05(pk_hex.clone(), nip05, true) {
                     state.verification_error = Some(format!("Failed to save: {}", e));
                 } else {
                     state.new_nip05.clear();
@@ -611,10 +610,7 @@ fn render_identity(app: &mut Hoot, ui: &mut egui::Ui) {
     }
 
     if let Some(pubkey) = account_to_remove {
-        if let Err(e) = app.backend.delete_account(pubkey) {
-            error!("couldn't remove key: {}", e);
-        }
-        app.refresh_accounts();
+        app.delete_account_and_refresh(pubkey);
     }
 }
 
@@ -692,9 +688,7 @@ fn render_relays(app: &mut Hoot, ui: &mut egui::Ui) {
     }
 
     if let Some(url) = relay_to_remove {
-        if let Err(e) = app.backend.remove_relay(url) {
-            error!("Failed to remove relay: {}", e);
-        }
+        app.remove_relay_url(url);
     }
 
     ui.horizontal(|ui| {
@@ -714,9 +708,7 @@ fn render_relays(app: &mut Hoot, ui: &mut egui::Ui) {
             && !app.state.settings.new_relay_url.is_empty()
         {
             let url = app.state.settings.new_relay_url.clone();
-            if let Err(e) = app.backend.add_relay(url) {
-                error!("Failed to add relay: {}", e);
-            }
+            app.add_relay_url(url);
             app.state.settings.new_relay_url.clear();
         }
     });
@@ -805,12 +797,4 @@ fn render_about(ui: &mut egui::Ui) {
             .fit_to_exact_size(egui::Vec2::new(120.0, 24.0)),
         );
     });
-}
-
-fn looks_like_nip05(value: &str) -> bool {
-    let mut parts = value.split('@');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(local), Some(domain), None) => !local.is_empty() && domain.contains('.'),
-        _ => false,
-    }
 }

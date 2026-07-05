@@ -2,9 +2,9 @@
 
 use eframe::egui::{self, Color32, FontDefinitions, FontId, Frame, Margin, RichText, Sense};
 use egui::FontFamily::Proportional;
-use hoot_backend::profile_metadata::ProfileOption;
 use hoot_backend::{
-    AccountSummary, BackendEvent, DraftDto, HootBackend, InitialSnapshot, Mailbox, TableEntry,
+    AccountSummary, BackendEvent, DraftDto, HootBackend, InitialSnapshot, Mailbox, ProfileOption,
+    TableEntry,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,11 +12,13 @@ use std::sync::Arc;
 use tracing::debug;
 use tracing::{error, info, Level};
 
+mod app_controller;
 mod image_loader;
 mod profile_metadata;
 mod style;
 mod types;
 mod ui;
+pub use app_controller::{sender_decision_refresh_plan, SenderDecision};
 pub use types::*;
 use ui::contacts::ContactsManager;
 
@@ -314,10 +316,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
                                     .map(|account| account.pubkey_hex.clone()),
                             };
                             if let Some(pubkey) = next_pubkey {
-                                match app.backend.set_active_account(Some(pubkey.clone())) {
-                                    Ok(()) => app.active_account_pubkey = Some(pubkey),
-                                    Err(e) => error!("Failed to select account: {}", e),
-                                }
+                                app.select_account(pubkey);
                             }
                         }
 
@@ -631,10 +630,9 @@ impl Hoot {
             HootStatus::PreUnlock => {
                 info!("Requesting Database Unlock before proceeding.");
                 self.status = HootStatus::WaitingForUnlock;
-                let _ = self
-                    .backend
-                    .add_relay("wss://relay.chakany.systems".to_string());
-                let _ = self.backend.add_relay("wss://talon.quest".to_string());
+                for relay_url in hoot_backend::default_relay_urls() {
+                    self.add_relay_url((*relay_url).to_string());
+                }
             }
             HootStatus::WaitingForUnlock => {
                 let _ = self.backend.tick();
@@ -760,6 +758,28 @@ impl Hoot {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepting_sender_refreshes_requests_then_inbox() {
+        let plan = sender_decision_refresh_plan(SenderDecision::Accept);
+
+        assert_eq!(plan.len(), 2);
+        assert!(matches!(plan[0], Mailbox::Requests));
+        assert!(matches!(plan[1], Mailbox::Inbox));
+    }
+
+    #[test]
+    fn rejecting_sender_refreshes_requests_then_junk() {
+        let plan = sender_decision_refresh_plan(SenderDecision::Reject);
+
+        assert_eq!(plan.len(), 2);
+        assert!(matches!(plan[0], Mailbox::Requests));
+        assert!(matches!(plan[1], Mailbox::Junk));
+    }
+}
 impl eframe::App for Hoot {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_backend();

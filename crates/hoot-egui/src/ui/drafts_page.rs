@@ -1,5 +1,4 @@
 use eframe::egui;
-use tracing::error;
 
 use crate::style;
 use crate::ui;
@@ -134,10 +133,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
             }
 
             if let Some(id) = draft_to_delete {
-                if let Err(e) = app.backend.delete_draft(id) {
-                    error!("Failed to delete draft: {}", e);
-                }
-                app.refresh_drafts();
+                app.delete_draft_and_refresh(id);
             }
         });
 }

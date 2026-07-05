@@ -26,7 +26,10 @@ pub struct OnboardingState {
 impl OnboardingState {
     fn with_default_relays() -> Self {
         Self {
-            relays: vec!["wss://talon.quest".to_string()],
+            relays: hoot_backend::default_relay_urls()
+                .iter()
+                .map(|url| (*url).to_string())
+                .collect(),
             publish_metadata: true,
             ..Default::default()
         }
@@ -317,10 +320,8 @@ fn render_relays(app: &mut Hoot, ui: &mut egui::Ui) {
     )
     .clicked()
     {
-        for relay_url in &app.state.onboarding.relays {
-            if let Err(e) = app.backend.add_relay(relay_url.clone()) {
-                tracing::error!("Failed to add relay: {}", e);
-            }
+        for relay_url in app.state.onboarding.relays.clone() {
+            app.add_relay_url(relay_url);
         }
         app.page = Page::OnboardingReady;
     }

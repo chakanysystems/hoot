@@ -1,5 +1,4 @@
 use eframe::egui::{self, RichText};
-use tracing::error;
 
 use crate::profile_metadata::get_profile_metadata;
 use crate::style;
@@ -94,20 +93,11 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
             }
 
             if let Some(event_id) = to_restore {
-                if let Err(e) = app.backend.restore_from_trash(event_id) {
-                    error!("Failed to restore from trash: {}", e);
-                } else {
-                    app.refresh_inbox();
-                    app.refresh_trash();
-                }
+                app.restore_from_trash_and_refresh(event_id);
             }
 
             if let Some(event_id) = to_delete {
-                if let Err(e) = app.backend.delete_messages_permanently(vec![event_id]) {
-                    error!("Failed to delete trashed event: {}", e);
-                } else {
-                    app.refresh_trash();
-                }
+                app.delete_messages_permanently_and_refresh(vec![event_id]);
             }
         });
 }

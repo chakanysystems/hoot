@@ -6,6 +6,42 @@ use crate::mail_event::{MailMessage, MAIL_EVENT_KIND};
 
 use super::{Db, RawEventData};
 
+#[derive(Debug)]
+struct MessageListRow {
+    id: String,
+    content: String,
+    created_at: i64,
+    pubkey: String,
+    subject: String,
+    thread_count: i64,
+}
+
+impl MessageListRow {
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            content: row.get(1)?,
+            created_at: row.get(2)?,
+            pubkey: row.get(3)?,
+            subject: row.get(4)?,
+            thread_count: row.get(5)?,
+        })
+    }
+}
+
+impl From<MessageListRow> for TableEntry {
+    fn from(row: MessageListRow) -> Self {
+        Self {
+            id: row.id,
+            content: row.content,
+            created_at: row.created_at,
+            pubkey: row.pubkey,
+            subject: row.subject,
+            thread_count: row.thread_count,
+        }
+    }
+}
+
 impl Db {
     /// These messages will be displayed inside the top-level table.
     pub fn get_top_level_messages(&self) -> Result<Vec<TableEntry>> {
@@ -84,18 +120,10 @@ JOIN events le ON le.id = (
 ORDER BY le.created_at DESC
             ",
         )?;
-        let msgs_iter = stmt.query_map([], |row| {
-            Ok(TableEntry {
-                id: row.get(0)?,
-                content: row.get(1)?,
-                created_at: row.get(2)?,
-                pubkey: row.get(3)?,
-                subject: row.get(4)?,
-                thread_count: row.get(5)?,
-            })
-        })?;
-
-        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+        let messages = stmt
+            .query_map([], MessageListRow::from_row)?
+            .map(|row| row.map(TableEntry::from))
+            .collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
 
         Ok(messages)
     }
@@ -117,18 +145,10 @@ ORDER BY le.created_at DESC
              ORDER BY t.trashed_at DESC",
         )?;
 
-        let msgs_iter = stmt.query_map([], |row| {
-            Ok(TableEntry {
-                id: row.get(0)?,
-                content: row.get(1)?,
-                created_at: row.get(2)?,
-                pubkey: row.get(3)?,
-                subject: row.get(4)?,
-                thread_count: row.get(5)?,
-            })
-        })?;
-
-        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+        let messages = stmt
+            .query_map([], MessageListRow::from_row)?
+            .map(|row| row.map(TableEntry::from))
+            .collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
         Ok(messages)
     }
 
@@ -168,18 +188,10 @@ ORDER BY le.created_at DESC
              ORDER BY e.created_at DESC",
         )?;
 
-        let msgs_iter = stmt.query_map([], |row| {
-            Ok(TableEntry {
-                id: row.get(0)?,
-                content: row.get(1)?,
-                created_at: row.get(2)?,
-                pubkey: row.get(3)?,
-                subject: row.get(4)?,
-                thread_count: row.get(5)?,
-            })
-        })?;
-
-        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+        let messages = stmt
+            .query_map([], MessageListRow::from_row)?
+            .map(|row| row.map(TableEntry::from))
+            .collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
         Ok(messages)
     }
 
@@ -210,18 +222,10 @@ ORDER BY le.created_at DESC
              ORDER BY e.created_at DESC",
         )?;
 
-        let msgs_iter = stmt.query_map([], |row| {
-            Ok(TableEntry {
-                id: row.get(0)?,
-                content: row.get(1)?,
-                created_at: row.get(2)?,
-                pubkey: row.get(3)?,
-                subject: row.get(4)?,
-                thread_count: row.get(5)?,
-            })
-        })?;
-
-        let messages = msgs_iter.collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
+        let messages = stmt
+            .query_map([], MessageListRow::from_row)?
+            .map(|row| row.map(TableEntry::from))
+            .collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
         Ok(messages)
     }
 
@@ -437,19 +441,37 @@ ORDER BY le.created_at DESC
 
         let params = rusqlite::params![&search_pattern, mail_kind];
 
-        let entries: Vec<TableEntry> = stmt
-            .query_map(params, |row| {
-                Ok(TableEntry {
-                    id: row.get(0)?,
-                    content: row.get(1)?,
-                    created_at: row.get(2)?,
-                    pubkey: row.get(3)?,
-                    subject: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                    thread_count: row.get(5)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let entries = stmt
+            .query_map(params, MessageListRow::from_row)?
+            .map(|row| row.map(TableEntry::from))
+            .collect::<Result<Vec<TableEntry>, rusqlite::Error>>()?;
 
         Ok(entries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn table_entry_mapping_preserves_message_list_row_fields() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let row = db.connection.query_row(
+            "SELECT 'event-id', 'body', 123, 'pubkey-hex', 'Subject line', 2",
+            [],
+            MessageListRow::from_row,
+        )?;
+
+        let entry = TableEntry::from(row);
+
+        assert_eq!(entry.id, "event-id");
+        assert_eq!(entry.content, "body");
+        assert_eq!(entry.created_at, 123);
+        assert_eq!(entry.pubkey, "pubkey-hex");
+        assert_eq!(entry.subject, "Subject line");
+        assert_eq!(entry.thread_count, 2);
+
+        Ok(())
     }
 }

@@ -347,4 +347,39 @@ mod tests {
             Some(("user".to_string(), "domain".to_string()))
         ); // No TLD is valid
     }
+
+    #[test]
+    fn recipient_parser_accepts_pubkey_encodings_and_normalizes_nip05() {
+        use nostr::{FromBech32, PublicKey};
+
+        let npub = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";
+        let expected_from_npub = PublicKey::from_bech32(npub).unwrap().to_hex();
+        match crate::parse_recipient_token(npub) {
+            Some(crate::ParsedRecipient::Pubkey(hex)) => assert_eq!(hex, expected_from_npub),
+            other => panic!("expected npub to parse as pubkey, got {other:?}"),
+        }
+
+        let hex = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefaf0f1";
+        match crate::parse_recipient_token(hex) {
+            Some(crate::ParsedRecipient::Pubkey(parsed_hex)) => assert_eq!(parsed_hex, hex),
+            other => panic!("expected hex pubkey to parse as pubkey, got {other:?}"),
+        }
+
+        match crate::parse_recipient_token("Bob@Example.COM") {
+            Some(crate::ParsedRecipient::Nip05 { identifier }) => {
+                assert_eq!(identifier, "bob@example.com");
+            }
+            other => panic!("expected NIP-05 to normalize to lowercase, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recipient_parser_rejects_invalid_tokens() {
+        for token in ["", "   ", "notakey", "bob@@example.com", "@example.com"] {
+            assert!(
+                crate::parse_recipient_token(token).is_none(),
+                "expected {token:?} to be rejected"
+            );
+        }
+    }
 }

@@ -1,5 +1,4 @@
-pub use hoot_backend::profile_metadata::ProfileOption;
-pub use hoot_backend::ProfileMetadata;
+pub use hoot_backend::{ProfileMetadata, ProfileOption};
 
 use crate::Hoot;
 use tracing::error;

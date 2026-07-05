@@ -1,11 +1,10 @@
 use eframe::egui::{self, RichText};
-use tracing::error;
+use hoot_backend::Mailbox;
 
 use crate::profile_metadata::get_profile_metadata;
 use crate::style;
 use crate::Hoot;
 use crate::Page;
-
 pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
     super::page_header(ui, "Junk");
 
@@ -82,12 +81,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
             }
 
             if let Some(pubkey) = to_unblock {
-                if let Err(e) = app.backend.remove_sender_status(pubkey) {
-                    error!("Failed to unblock sender: {}", e);
-                } else {
-                    app.refresh_junk();
-                    app.refresh_requests();
-                }
+                app.remove_sender_status_and_refresh(pubkey, &[Mailbox::Junk, Mailbox::Requests]);
             }
         });
 }

@@ -1,11 +1,10 @@
 use eframe::egui::{self, RichText};
-use tracing::error;
 
 use crate::profile_metadata::get_profile_metadata;
 use crate::style;
 use crate::Hoot;
 use crate::Page;
-use hoot_backend::SenderStatusDto;
+use crate::SenderDecision;
 
 pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
     super::page_header(ui, "Requests");
@@ -120,21 +119,11 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
             }
 
             if let Some(pubkey) = to_accept {
-                if let Err(e) = app.backend.set_sender_status(pubkey, SenderStatusDto::Allowed) {
-                    error!("Failed to accept sender: {}", e);
-                } else {
-                    app.refresh_requests();
-                    app.refresh_inbox();
-                }
+                app.apply_sender_decision(pubkey, SenderDecision::Accept);
             }
 
             if let Some(pubkey) = to_reject {
-                if let Err(e) = app.backend.set_sender_status(pubkey, SenderStatusDto::Junked) {
-                    error!("Failed to reject sender: {}", e);
-                } else {
-                    app.refresh_requests();
-                    app.refresh_junk();
-                }
+                app.apply_sender_decision(pubkey, SenderDecision::Reject);
             }
         });
 }

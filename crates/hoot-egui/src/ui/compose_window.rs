@@ -1,7 +1,6 @@
 use crate::style;
 use eframe::egui::{self, Color32, CornerRadius, FontId, RichText, Stroke};
-use hoot_backend::{ComposeMessageInput, DraftDto, DraftInput};
-use nostr::{FromBech32, PublicKey};
+use hoot_backend::{ComposeMessageInput, DraftDto, DraftInput, ParsedRecipient};
 use tracing::{error, info};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,45 +26,13 @@ pub enum RecipientKind {
 }
 
 pub fn parse_recipient_token(token: &str) -> Option<RecipientKind> {
-    let token = token.trim();
-    if token.is_empty() {
-        return None;
-    }
-
-    if token.contains('@') {
-        let normalized = token.to_lowercase();
-        if looks_like_nip05(&normalized) {
-            return Some(RecipientKind::Nip05 {
-                identifier: normalized,
-                resolution: Nip05Resolution::Pending,
-            });
-        }
-        return None;
-    }
-
-    if let Ok(pk) = PublicKey::from_bech32(token) {
-        return Some(RecipientKind::Pubkey(pk.to_hex()));
-    }
-
-    if let Ok(pk) = PublicKey::from_hex(token) {
-        return Some(RecipientKind::Pubkey(pk.to_hex()));
-    }
-
-    None
-}
-
-fn looks_like_nip05(value: &str) -> bool {
-    let mut parts = value.split('@');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(local), Some(domain), None) => {
-            !local.is_empty()
-                && local.chars().all(|c| {
-                    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.')
-                })
-                && domain.contains('.')
-        }
-        _ => false,
-    }
+    hoot_backend::parse_recipient_token(token).map(|recipient| match recipient {
+        ParsedRecipient::Pubkey(pubkey) => RecipientKind::Pubkey(pubkey),
+        ParsedRecipient::Nip05 { identifier } => RecipientKind::Nip05 {
+            identifier,
+            resolution: Nip05Resolution::Pending,
+        },
+    })
 }
 
 pub fn serialize_recipients(recipients: &[Recipient]) -> String {
@@ -758,41 +725,30 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_recipient_npub() {
+    fn compose_recipient_parser_uses_backend_contract() {
         let npub = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";
-        let result = parse_recipient_token(npub);
-        assert!(matches!(result, Some(RecipientKind::Pubkey(_))));
-    }
+        assert!(matches!(
+            hoot_backend::parse_recipient_token(npub),
+            Some(hoot_backend::ParsedRecipient::Pubkey(_))
+        ));
 
-    #[test]
-    fn test_parse_recipient_nip05() {
-        let result = parse_recipient_token("bob@example.com");
-        assert!(matches!(result, Some(RecipientKind::Nip05 { .. })));
-    }
-
-    #[test]
-    fn test_parse_recipient_hex_pubkey() {
         let hex = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefaf0f1";
-        let result = parse_recipient_token(hex);
-        assert!(matches!(result, Some(RecipientKind::Pubkey(_))));
-    }
+        assert!(matches!(
+            hoot_backend::parse_recipient_token(hex),
+            Some(hoot_backend::ParsedRecipient::Pubkey(parsed_hex)) if parsed_hex == hex
+        ));
 
-    #[test]
-    fn test_parse_recipient_nip05_uppercase_normalized() {
-        let result = parse_recipient_token("Bob@example.com");
-        match result {
-            Some(RecipientKind::Nip05 { identifier, .. }) => {
-                assert_eq!(identifier, "bob@example.com");
-            }
-            _ => panic!("expected Nip05 variant"),
+        assert!(matches!(
+            hoot_backend::parse_recipient_token("Bob@Example.COM"),
+            Some(hoot_backend::ParsedRecipient::Nip05 { identifier }) if identifier == "bob@example.com"
+        ));
+
+        for token in ["", "   ", "notakey", "bob@@example.com", "@example.com"] {
+            assert!(
+                hoot_backend::parse_recipient_token(token).is_none(),
+                "expected {token:?} to be rejected by backend recipient parser"
+            );
         }
-    }
-
-    #[test]
-    fn test_parse_recipient_invalid() {
-        assert!(parse_recipient_token("notakey").is_none());
-        assert!(parse_recipient_token("").is_none());
-        assert!(parse_recipient_token("   ").is_none());
     }
 
     #[test]
