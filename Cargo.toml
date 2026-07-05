@@ -1,48 +1,31 @@
-[package]
-name = "hoot"
+[workspace]
+members = ["crates/hoot-backend", "crates/hoot-egui"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 authors = ["Jack Chakany <jack@chakany.systems>"]
 edition = "2021"
-publish = false
 
-[features]
-profiling = [
-    "dep:puffin",
-    "dep:puffin_http",
-]
-
-[dependencies]
+[workspace.dependencies]
+anyhow = "1.0.96"
+chrono = "0.4"
 eframe = { version = "0.33.3", features = ["default", "persistence"] }
 egui_extras = { version = "0.33.3", features = ["file", "image", "svg"] }
+ewebsock = { version = "0.6.0", features = ["tls"] }
 image = { version = "0.25.1", features = ["jpeg", "png"] }
+include_dir = "0.7.4"
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native"] }
+nostr = { version = "0.37.0", features = ["std", "nip59"] }
+pollster = "0.4.0"
+rand = "0.8.5"
 reqwest = { version = "0.12.9", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+rusqlite = { version = "0.36.0", features = ["chrono", "serde_json", "bundled-sqlcipher-vendored-openssl", "functions"] }
+rusqlite_migration = { version = "2.2.0", features = ["from-directory"] }
+serde = "1.0.204"
+serde_json = "1.0.121"
+thiserror = "2"
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = "0.3.18"
-puffin = { version = "0.19.0", optional = true }
-puffin_http = { version = "0.16.0", optional = true }
-ewebsock = { version = "0.6.0", features = ["tls"] }
-rand = "0.8.5"
-nostr = { version = "0.37.0", features = ["std", "nip59"] }
-serde = "1.0.204"
-serde_json = "1.0.121"
-pollster = "0.4.0"
-rusqlite = { version = "0.36.0", features = [
-    "chrono",
-    "serde_json",
-    "bundled-sqlcipher-vendored-openssl",
-    "functions",
-] }
-rusqlite_migration = { version = "2.2.0", features = ["from-directory"] }
-anyhow = "1.0.96"
-chrono = "0.4"
-include_dir = "0.7.4"
-keyring = { version =  "3.6.3", features = ["apple-native", "windows-native", "linux-native"] }
-
-[package.metadata.bundle]
-name = "Hoot"
-identifier = "systems.chakany.hoot"
-version = "0.1.0"
-copyright = "Copyright (c) Chakany Systems 2026"
-category = "public.app-category.productivity"
-short_description = "Nostr email"
+uniffi = "0.31.2"

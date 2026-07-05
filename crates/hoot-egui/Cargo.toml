@@ -1,0 +1,36 @@
+[package]
+name = "hoot-egui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "hoot"
+path = "src/main.rs"
+
+[features]
+profiling = ["dep:puffin", "dep:puffin_http"]
+
+[dependencies]
+hoot-backend = { path = "../hoot-backend" }
+chrono.workspace = true
+eframe.workspace = true
+egui_extras.workspace = true
+image.workspace = true
+nostr.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+puffin = { version = "0.19.0", optional = true }
+puffin_http = { version = "0.16.0", optional = true }
+
+[package.metadata.bundle]
+name = "Hoot"
+identifier = "systems.chakany.hoot"
+version = "0.1.0"
+copyright = "Copyright (c) Chakany Systems 2026"
+category = "public.app-category.productivity"
+short_description = "Nostr email"
