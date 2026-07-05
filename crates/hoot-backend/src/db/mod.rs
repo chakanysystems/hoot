@@ -112,7 +112,7 @@ mod tests {
         let pk = Keys::generate().public_key();
         db.add_pubkey(pk.to_hex())?;
         let saved_list = db.get_pubkeys()?;
-        assert!(saved_list.first().is_some());
+        assert!(!saved_list.is_empty());
         assert_eq!(saved_list.first().unwrap(), &pk.to_hex());
 
         Ok(())
@@ -124,12 +124,11 @@ mod tests {
         let pk = Keys::generate().public_key();
         db.add_pubkey(pk.to_hex())?;
         let saved_list = db.get_pubkeys()?;
-        assert!(saved_list.first().is_some());
+        assert!(!saved_list.is_empty());
         assert_eq!(saved_list.first().unwrap(), &pk.to_hex());
 
         db.delete_pubkey(pk.to_hex())?;
         let saved_list = db.get_pubkeys()?;
-        assert!(saved_list.first().is_none());
         assert!(saved_list.is_empty());
 
         Ok(())

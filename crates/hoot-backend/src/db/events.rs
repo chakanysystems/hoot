@@ -492,7 +492,7 @@ mod tests {
             db.store_event(event, None, None)?;
         }
         db.record_trash(&[expired_id.clone(), restored_id.clone()], 10)?;
-        db.record_trash(&[future_id.clone()], 30)?;
+        db.record_trash(std::slice::from_ref(&future_id), 30)?;
 
         let trashed = db.get_trashed_event_ids(&[
             expired_id.clone(),
@@ -556,7 +556,7 @@ mod tests {
         let event = signed_event(&keys, Kind::TextNote, "purge me", 300);
         let event_id = event.id.to_string();
         db.store_event(&event, None, None)?;
-        db.record_deletion_markers(&[event_id.clone()], Some("delete-source"))?;
+        db.record_deletion_markers(std::slice::from_ref(&event_id), Some("delete-source"))?;
         assert!(db.has_event(&event_id)?);
 
         db.purge_deleted_events()?;

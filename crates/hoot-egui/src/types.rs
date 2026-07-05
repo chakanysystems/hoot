@@ -26,9 +26,8 @@ pub enum Page {
 }
 
 impl Page {
-    /// Returns true for app pages that show the sidebar + search bar.
-    /// Onboarding and unlock are full-screen flows without chrome.
-    pub fn shows_chrome(&self) -> bool {
+    /// Returns true for app pages that show the left navigation panel.
+    pub fn shows_left_panel(&self) -> bool {
         matches!(
             self,
             Page::Inbox
@@ -43,6 +42,11 @@ impl Page {
                 | Page::Post
                 | Page::SearchResults
         )
+    }
+
+    /// Returns true for pages that show the global search bar.
+    pub fn shows_global_search(&self) -> bool {
+        self.shows_left_panel() || matches!(self, Page::OnboardingRelay)
     }
 }
 
@@ -110,5 +114,52 @@ impl SearchState {
         self.results.clear();
         self.last_query_time = None;
         self.selected_suggestion = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Page;
+
+    #[test]
+    fn page_chrome_policies_keep_onboarding_relay_search_only() {
+        let left_panel_pages = [
+            Page::Inbox,
+            Page::Drafts,
+            Page::Starred,
+            Page::Archived,
+            Page::Trash,
+            Page::Requests,
+            Page::Junk,
+            Page::Settings,
+            Page::Post,
+            Page::Contacts,
+            Page::SearchResults,
+        ];
+        for page in left_panel_pages {
+            assert!(page.shows_left_panel(), "{page:?} should show left panel");
+            assert!(
+                page.shows_global_search(),
+                "{page:?} should show global search"
+            );
+        }
+
+        let full_screen_pages = [
+            Page::Unlock,
+            Page::Onboarding,
+            Page::OnboardingNewUser,
+            Page::OnboardingNewShowKey,
+            Page::OnboardingReady,
+        ];
+        for page in full_screen_pages {
+            assert!(!page.shows_left_panel(), "{page:?} should hide left panel");
+            assert!(
+                !page.shows_global_search(),
+                "{page:?} should hide global search"
+            );
+        }
+
+        assert!(!Page::OnboardingRelay.shows_left_panel());
+        assert!(Page::OnboardingRelay.shows_global_search());
     }
 }

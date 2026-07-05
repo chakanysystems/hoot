@@ -486,14 +486,22 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
             );
         });
 }
+
+fn sync_unlock_window_state(state: &mut HootState, page: &Page, id: egui::Id) -> bool {
+    if page == &Page::Unlock {
+        state.unlock_window.entry(id).or_default();
+        true
+    } else {
+        state.unlock_window.remove(&id);
+        false
+    }
+}
+
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
     let unlock_window_id = egui::Id::new(ui::unlock_window::UNLOCK_WINDOW_ID);
-    if app.page == Page::Unlock {
-        app.state.unlock_window.entry(unlock_window_id).or_default();
-    } else {
-        app.state.unlock_window.remove(&unlock_window_id);
-    }
-    if !ui::unlock_window::UnlockWindow::show_window(app, ctx, unlock_window_id) {
+    if sync_unlock_window_state(&mut app.state, &app.page, unlock_window_id)
+        && !ui::unlock_window::UnlockWindow::show_window(app, ctx, unlock_window_id)
+    {
         app.state.unlock_window.remove(&unlock_window_id);
     }
 
@@ -523,11 +531,11 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         app.state.compose_window.remove(&id);
     }
 
-    if app.page.shows_chrome() {
+    if app.page.shows_left_panel() {
         render_left_panel(app, ctx);
     }
 
-    if app.page.shows_chrome() {
+    if app.page.shows_global_search() {
         ui::search::render_global_search_bar(app, ctx);
     }
 
@@ -735,28 +743,6 @@ fn active_account_pubkey(accounts: &[AccountSummary]) -> Option<String> {
         .or_else(|| accounts.first().map(|account| account.pubkey_hex.clone()))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn accepting_sender_refreshes_requests_then_inbox() {
-        let plan = sender_decision_refresh_plan(SenderDecision::Accept);
-
-        assert_eq!(plan.len(), 2);
-        assert!(matches!(plan[0], Mailbox::Requests));
-        assert!(matches!(plan[1], Mailbox::Inbox));
-    }
-
-    #[test]
-    fn rejecting_sender_refreshes_requests_then_junk() {
-        let plan = sender_decision_refresh_plan(SenderDecision::Reject);
-
-        assert_eq!(plan.len(), 2);
-        assert!(matches!(plan[0], Mailbox::Requests));
-        assert!(matches!(plan[1], Mailbox::Junk));
-    }
-}
 impl eframe::App for Hoot {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_backend();
@@ -786,4 +772,42 @@ fn start_puffin_server() {
             error!("Failed to start puffin server: {}", err);
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepting_sender_refreshes_requests_then_inbox() {
+        let plan = sender_decision_refresh_plan(SenderDecision::Accept);
+
+        assert_eq!(plan.len(), 2);
+        assert!(matches!(plan[0], Mailbox::Requests));
+        assert!(matches!(plan[1], Mailbox::Inbox));
+    }
+
+    #[test]
+    fn rejecting_sender_refreshes_requests_then_junk() {
+        let plan = sender_decision_refresh_plan(SenderDecision::Reject);
+
+        assert_eq!(plan.len(), 2);
+        assert!(matches!(plan[0], Mailbox::Requests));
+        assert!(matches!(plan[1], Mailbox::Junk));
+    }
+
+    #[test]
+    fn unlock_window_rendering_is_gated_by_unlock_page() {
+        let id = egui::Id::new(ui::unlock_window::UNLOCK_WINDOW_ID);
+        let mut state = HootState::default();
+
+        assert!(!sync_unlock_window_state(&mut state, &Page::Inbox, id));
+        assert!(!state.unlock_window.contains_key(&id));
+
+        assert!(sync_unlock_window_state(&mut state, &Page::Unlock, id));
+        assert!(state.unlock_window.contains_key(&id));
+
+        assert!(!sync_unlock_window_state(&mut state, &Page::Inbox, id));
+        assert!(!state.unlock_window.contains_key(&id));
+    }
 }

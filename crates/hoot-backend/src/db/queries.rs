@@ -246,7 +246,7 @@ ORDER BY le.created_at DESC
                )",
         )?;
 
-        let mail_kind = u32::from(MAIL_EVENT_KIND as u16);
+        let mail_kind = u32::from(MAIL_EVENT_KIND);
 
         let id_iter = stmt.query_map([mail_kind], |row| {
             let id: String = row.get(0)?;

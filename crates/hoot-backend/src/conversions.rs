@@ -160,6 +160,14 @@ pub(crate) fn dedup_events(events: Vec<BackendEvent>) -> Vec<BackendEvent> {
     deduped
 }
 
+/// Converts a hex pubkey to its bech32 npub encoding.
+/// Returns None if the hex string is not a valid 32-byte pubkey.
+pub fn npub_string(pubkey_hex: &str) -> Option<String> {
+    PublicKey::from_hex(pubkey_hex)
+        .ok()
+        .and_then(|pk| pk.to_bech32().ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,12 +318,4 @@ mod tests {
         assert!(matches!(events[3], BackendEvent::AccountsChanged));
         assert_eq!(events.len(), 4);
     }
-}
-
-/// Converts a hex pubkey to its bech32 npub encoding.
-/// Returns None if the hex string is not a valid 32-byte pubkey.
-pub fn npub_string(pubkey_hex: &str) -> Option<String> {
-    PublicKey::from_hex(pubkey_hex)
-        .ok()
-        .and_then(|pk| pk.to_bech32().ok())
 }

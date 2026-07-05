@@ -292,7 +292,7 @@ mod tests {
 
         if let Ok(RelayMessage::OK(result)) = result {
             assert_eq!(result.event_id, event_id);
-            assert_eq!(result.status, true);
+            assert!(result.status);
             assert_eq!(result.message, "");
         } else {
             panic!("Expected OK variant, got: {:?}", result);
@@ -309,7 +309,7 @@ mod tests {
 
         if let Ok(RelayMessage::OK(result)) = result {
             assert_eq!(result.event_id, event_id);
-            assert_eq!(result.status, false);
+            assert!(!result.status);
             assert_eq!(result.message, "rate-limited: slow down");
         } else {
             panic!("Expected OK variant, got: {:?}", result);
@@ -329,7 +329,7 @@ mod tests {
 
         if let Ok(RelayMessage::OK(result)) = result {
             assert_eq!(result.event_id, event_id);
-            assert_eq!(result.status, false);
+            assert!(!result.status);
             assert_eq!(result.message, "auth-required: please authenticate");
             assert!(
                 result.message.starts_with("auth-required:"),
@@ -354,7 +354,7 @@ mod tests {
 
         if let Ok(RelayMessage::OK(result)) = result {
             assert_eq!(result.event_id, event_id);
-            assert_eq!(result.status, true);
+            assert!(result.status);
             assert_eq!(result.message, "");
         } else {
             panic!("Expected OK variant, got: {:?}", result);
@@ -371,7 +371,7 @@ mod tests {
         };
 
         assert_eq!(result.event_id, "test-id");
-        assert_eq!(result.status, true);
+        assert!(result.status);
         assert_eq!(result.message, "test message");
     }
 

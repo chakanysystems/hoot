@@ -9,7 +9,13 @@ pub enum SenderStatus {
     Junked,
 }
 
-pub type SenderStatusRow = (String, Option<String>, Option<String>, Option<String>, i64);
+pub struct SenderStatusRow {
+    pub pubkey: String,
+    pub name: Option<String>,
+    pub display_name: Option<String>,
+    pub picture: Option<String>,
+    pub created_at: i64,
+}
 
 impl SenderStatus {
     pub fn as_str(&self) -> &'static str {
@@ -66,13 +72,13 @@ impl Db {
         )?;
 
         let rows = stmt.query_map([status.as_str()], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
+            Ok(SenderStatusRow {
+                pubkey: row.get(0)?,
+                name: row.get(1)?,
+                display_name: row.get(2)?,
+                picture: row.get(3)?,
+                created_at: row.get(4)?,
+            })
         })?;
 
         let results = rows.collect::<Result<Vec<_>, rusqlite::Error>>()?;
@@ -178,18 +184,18 @@ mod tests {
 
         let allowed_rows = db.get_senders_by_status(&SenderStatus::Allowed)?;
         assert_eq!(allowed_rows.len(), 1);
-        assert_eq!(allowed_rows[0].0, allowed);
-        assert_eq!(allowed_rows[0].1.as_deref(), Some("alice"));
-        assert_eq!(allowed_rows[0].2.as_deref(), Some("Alice"));
+        assert_eq!(allowed_rows[0].pubkey, allowed);
+        assert_eq!(allowed_rows[0].name.as_deref(), Some("alice"));
+        assert_eq!(allowed_rows[0].display_name.as_deref(), Some("Alice"));
         assert_eq!(
-            allowed_rows[0].3.as_deref(),
+            allowed_rows[0].picture.as_deref(),
             Some("https://example.com/a.png")
         );
-        assert!(allowed_rows[0].4 > 0);
+        assert!(allowed_rows[0].created_at > 0);
 
         let junked_rows = db.get_senders_by_status(&SenderStatus::Junked)?;
         assert_eq!(junked_rows.len(), 1);
-        assert_eq!(junked_rows[0].0, junked);
+        assert_eq!(junked_rows[0].pubkey, junked);
 
         Ok(())
     }
@@ -226,14 +232,14 @@ mod tests {
         assert_eq!(
             db.get_senders_by_status(&SenderStatus::Allowed)?
                 .into_iter()
-                .map(|row| row.0)
+                .map(|row| row.pubkey)
                 .collect::<Vec<_>>(),
             vec![still_allowed.to_string()]
         );
         assert_eq!(
             db.get_senders_by_status(&SenderStatus::Junked)?
                 .into_iter()
-                .map(|row| row.0)
+                .map(|row| row.pubkey)
                 .collect::<Vec<_>>(),
             vec![junked.to_string()]
         );

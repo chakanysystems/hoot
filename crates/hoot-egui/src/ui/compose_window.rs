@@ -307,15 +307,102 @@ pub fn hydrate_recipients(to_field: &str) -> Vec<Recipient> {
         .collect()
 }
 
+struct HeaderRenderOutput {
+    rect: egui::Rect,
+    panel: ComposePanelOutput,
+    draft_action: DraftAction,
+}
+
+fn truncate_pubkey_label(raw: &str) -> String {
+    if raw.chars().count() <= 20 {
+        return raw.to_string();
+    }
+
+    let head: String = raw.chars().take(8).collect();
+    let tail: String = raw
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}…{}", head, tail)
+}
+
+fn recipient_chip_label(recipient: &Recipient) -> (String, Color32) {
+    match &recipient.kind {
+        RecipientKind::Pubkey(_) => (truncate_pubkey_label(&recipient.raw), style::TEXT),
+        RecipientKind::Nip05 {
+            identifier,
+            resolution,
+        } => {
+            let (icon, color) = match resolution {
+                Nip05Resolution::Pending => ("? ", style::TEXT3),
+                Nip05Resolution::Resolved(_) => ("✓ ", style::GREEN),
+                Nip05Resolution::Failed => ("✗ ", Color32::RED),
+            };
+            (format!("{}{}", icon, identifier), color)
+        }
+    }
+}
+
+fn render_recipient_chip(ui: &mut egui::Ui, label_text: &str, label_color: Color32) -> bool {
+    let mut remove_clicked = false;
+    egui::Frame::new()
+        .fill(style::SURFACE2)
+        .stroke(egui::Stroke::new(1.0, style::border()))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin {
+            left: 6,
+            right: 4,
+            top: 2,
+            bottom: 2,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new(label_text).size(12.5).color(label_color));
+                if style::pointer(
+                    ui.add(
+                        egui::Button::new(RichText::new("×").size(12.0).color(style::TEXT3))
+                            .frame(false)
+                            .min_size(egui::vec2(14.0, 14.0)),
+                    ),
+                )
+                .clicked()
+                {
+                    remove_clicked = true;
+                }
+            });
+        });
+    remove_clicked
+}
+
+fn committed_recipient_from_input(
+    state: &mut ComposeWindowState,
+) -> Option<(Recipient, Option<String>)> {
+    match consume_pending_recipient_input(state) {
+        Ok(Some(recipient)) => {
+            let nip05 = match &recipient.kind {
+                RecipientKind::Nip05 { identifier, .. } => Some(identifier.clone()),
+                RecipientKind::Pubkey(_) => None,
+            };
+            Some((recipient, nip05))
+        }
+        Ok(None) | Err(_) => None,
+    }
+}
+
 fn render_panel_header(
     app: &mut crate::Hoot,
     ui: &mut egui::Ui,
     title: &str,
     show_close_button: bool,
     state: &mut ComposeWindowState,
-    output: &mut ComposePanelOutput,
-    draft_action: &mut DraftAction,
-) -> egui::Rect {
+) -> HeaderRenderOutput {
+    let mut panel = ComposePanelOutput::default();
+    let mut draft_action = DraftAction::None;
     let header_resp = egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 16,
@@ -337,7 +424,7 @@ fn render_panel_header(
                     )
                     .clicked()
                     {
-                        output.close_clicked = true;
+                        panel.close_clicked = true;
                     }
                     ui.add_space(6.0);
                 }
@@ -362,10 +449,10 @@ fn render_panel_header(
 
                     if style::pointer(ui.add_enabled(!to_empty, send_btn)).clicked() {
                         let send_output = send_message(app, state);
-                        output.sent_message = send_output.sent_message;
+                        panel.sent_message = send_output.sent_message;
                         if send_output.sent_message {
                             if let Some(draft_id) = state.draft_id {
-                                *draft_action = DraftAction::Delete(draft_id);
+                                draft_action = DraftAction::Delete(draft_id);
                             }
                         }
                     }
@@ -373,7 +460,11 @@ fn render_panel_header(
             });
         });
 
-    header_resp.response.rect
+    HeaderRenderOutput {
+        rect: header_resp.response.rect,
+        panel,
+        draft_action,
+    }
 }
 
 fn render_recipient_bar(
@@ -395,68 +486,10 @@ fn render_recipient_bar(
         to_underline_left = ui.cursor().left();
 
         for (i, recipient) in state.recipients.iter().enumerate() {
-            let (label_text, label_color) = match &recipient.kind {
-                RecipientKind::Pubkey(_) => {
-                    let raw = &recipient.raw;
-                    let char_count = raw.chars().count();
-                    let truncated = if char_count > 20 {
-                        let head: String = raw.chars().take(8).collect();
-                        let tail: String = raw
-                            .chars()
-                            .rev()
-                            .take(4)
-                            .collect::<String>()
-                            .chars()
-                            .rev()
-                            .collect();
-                        format!("{}…{}", head, tail)
-                    } else {
-                        raw.clone()
-                    };
-                    (truncated, style::TEXT)
-                }
-                RecipientKind::Nip05 {
-                    identifier,
-                    resolution,
-                } => {
-                    let (icon, color) = match resolution {
-                        Nip05Resolution::Pending => ("? ", style::TEXT3),
-                        Nip05Resolution::Resolved(_) => ("✓ ", style::GREEN),
-                        Nip05Resolution::Failed => ("✗ ", Color32::RED),
-                    };
-                    (format!("{}{}", icon, identifier), color)
-                }
-            };
-
-            egui::Frame::new()
-                .fill(style::SURFACE2)
-                .stroke(egui::Stroke::new(1.0, style::border()))
-                .corner_radius(egui::CornerRadius::same(6))
-                .inner_margin(egui::Margin {
-                    left: 6,
-                    right: 4,
-                    top: 2,
-                    bottom: 2,
-                })
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(RichText::new(&label_text).size(12.5).color(label_color));
-                        if style::pointer(
-                            ui.add(
-                                egui::Button::new(
-                                    RichText::new("×").size(12.0).color(style::TEXT3),
-                                )
-                                .frame(false)
-                                .min_size(egui::vec2(14.0, 14.0)),
-                            ),
-                        )
-                        .clicked()
-                        {
-                            remove_idx = Some(i);
-                        }
-                    });
-                });
+            let (label_text, label_color) = recipient_chip_label(recipient);
+            if render_recipient_chip(ui, &label_text, label_color) {
+                remove_idx = Some(i);
+            }
         }
 
         let input_width = (ui.available_width() - ui.spacing().item_spacing.x).max(120.0);
@@ -483,15 +516,9 @@ fn render_recipient_bar(
         to_input_rect = input_resp.rect;
 
         if commit_keyed || commit_delim {
-            match consume_pending_recipient_input(state) {
-                Ok(Some(recipient)) => {
-                    if let RecipientKind::Nip05 { identifier, .. } = &recipient.kind {
-                        nip05_to_request = Some(identifier.clone());
-                    }
-                    new_recipient = Some(recipient);
-                }
-                Ok(None) => {}
-                Err(_) => {}
+            if let Some((recipient, nip05)) = committed_recipient_from_input(state) {
+                nip05_to_request = nip05;
+                new_recipient = Some(recipient);
             }
         }
     });
@@ -560,8 +587,8 @@ fn render_compose_actions(
     ui: &mut egui::Ui,
     id: egui::Id,
     state: &mut ComposeWindowState,
-    draft_action: &mut DraftAction,
-) {
+) -> DraftAction {
+    let mut draft_action = DraftAction::None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 12,
@@ -641,7 +668,7 @@ fn render_compose_actions(
                     .clicked()
                         && flush_pending_recipient_input(app, state)
                     {
-                        *draft_action = save_draft(state);
+                        draft_action = save_draft(state);
                         state.send_status = Some(("Draft saved".to_string(), style::TEXT2));
                     }
 
@@ -651,6 +678,7 @@ fn render_compose_actions(
                 });
             });
         });
+    draft_action
 }
 
 pub fn render_panel(
@@ -672,17 +700,10 @@ pub fn render_panel(
 
     sync_nip05_resolutions(app, state);
 
-    let mut output = ComposePanelOutput::default();
-    let mut draft_action = DraftAction::None;
-    let header_rect = render_panel_header(
-        app,
-        ui,
-        title,
-        show_close_button,
-        state,
-        &mut output,
-        &mut draft_action,
-    );
+    let header = render_panel_header(app, ui, title, show_close_button, state);
+    let header_rect = header.rect;
+    let output = header.panel;
+    let header_draft_action = header.draft_action;
     ui.painter().line_segment(
         [
             egui::pos2(header_rect.left(), header_rect.bottom()),
@@ -721,7 +742,11 @@ pub fn render_panel(
         Stroke::new(1.0, style::border()),
     );
 
-    render_compose_actions(app, ui, id, state, &mut draft_action);
+    let footer_draft_action = render_compose_actions(app, ui, id, state);
+    let draft_action = match footer_draft_action {
+        DraftAction::None => header_draft_action,
+        action => action,
+    };
     apply_draft_action(app, state, draft_action);
 
     output

@@ -67,10 +67,22 @@ pub struct AddAccountWindow {}
 
 pub const ONBOARDING_ADD_ACCOUNT_WINDOW_ID: &str = "onboarding_add_account_window";
 
+fn should_render_onboarding_account_window(page: &Page) -> bool {
+    matches!(page, Page::OnboardingNewUser)
+}
+
+fn keeps_onboarding_account_window_state(page: &Page) -> bool {
+    matches!(page, Page::OnboardingNewUser | Page::OnboardingNewShowKey)
+}
+
 impl AddAccountWindow {
     /// Main rendering function - returns false if window should be closed
     pub fn show_window(app: &mut crate::Hoot, ctx: &egui::Context, id: egui::Id) -> bool {
         let is_onboarding = id == egui::Id::new(ONBOARDING_ADD_ACCOUNT_WINDOW_ID);
+        if is_onboarding && !should_render_onboarding_account_window(&app.page) {
+            return keeps_onboarding_account_window_state(&app.page);
+        }
+
         let mut keep_open = true;
         let mut close_clicked = false;
         let mut should_close_from_save = false;
@@ -215,8 +227,8 @@ impl AddAccountWindow {
             app.page = Page::Onboarding;
         }
 
-        if is_onboarding && !matches!(app.page, Page::OnboardingNewUser) {
-            return false;
+        if is_onboarding && !should_render_onboarding_account_window(&app.page) {
+            return keeps_onboarding_account_window_state(&app.page);
         }
 
         keep_open && !close_clicked && !should_close_from_save
@@ -1215,4 +1227,36 @@ enum PasswordStrength {
     Weak,
     Fair,
     Strong,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn onboarding_account_window_keeps_generated_key_backup_state_without_rendering_modal() {
+        assert!(should_render_onboarding_account_window(
+            &Page::OnboardingNewUser
+        ));
+        assert!(keeps_onboarding_account_window_state(
+            &Page::OnboardingNewUser
+        ));
+
+        assert!(!should_render_onboarding_account_window(
+            &Page::OnboardingNewShowKey
+        ));
+        assert!(keeps_onboarding_account_window_state(
+            &Page::OnboardingNewShowKey
+        ));
+
+        for page in [
+            Page::Onboarding,
+            Page::OnboardingRelay,
+            Page::OnboardingReady,
+            Page::Inbox,
+        ] {
+            assert!(!should_render_onboarding_account_window(&page));
+            assert!(!keeps_onboarding_account_window_state(&page));
+        }
+    }
 }

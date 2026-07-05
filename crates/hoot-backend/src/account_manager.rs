@@ -382,7 +382,7 @@ mod tests {
 
         let mut account_manager = AccountManager::new();
         let generated_keys = account_manager.generate_new_keys_and_save(&db)?;
-        assert!(account_manager.loaded_keys.first().is_some());
+        assert!(!account_manager.loaded_keys.is_empty());
         account_manager.delete_key(&db, &generated_keys)?;
         assert_eq!(account_manager.loaded_keys.len(), 0);
 

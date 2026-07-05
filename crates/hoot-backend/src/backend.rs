@@ -410,15 +410,13 @@ impl HootBackend {
             .map(|senders| {
                 senders
                     .into_iter()
-                    .map(
-                        |(pubkey, name, display_name, picture, created_at)| SenderStatusEntry {
-                            pubkey,
-                            name,
-                            display_name,
-                            picture,
-                            created_at,
-                        },
-                    )
+                    .map(|row| SenderStatusEntry {
+                        pubkey: row.pubkey,
+                        name: row.name,
+                        display_name: row.display_name,
+                        picture: row.picture,
+                        created_at: row.created_at,
+                    })
                     .collect()
             })
             .map_err(database_error)

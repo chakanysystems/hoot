@@ -201,31 +201,24 @@ pub fn avatar_color_for_initials(initials: &str) -> (Color32, Color32) {
     }
 }
 
-/// Badge protocol type.
-#[derive(Clone, Copy)]
-pub enum BadgeKind {
-    Nostr,
-}
-/// Paint a protocol badge at a given position using raw painter calls.
-/// Returns the width of the painted badge (for chaining multiple badges).
-pub fn paint_badge_at(painter: &egui::Painter, pos: egui::Pos2, kind: BadgeKind) -> f32 {
-    let (label, bg, fg) = match kind {
-        BadgeKind::Nostr => ("nostr", badge_nostr_bg(), BADGE_NOSTR_TEXT),
-    };
-    let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(10.0), fg);
+/// Paint the nostr protocol badge at a given position.
+/// Returns the width of the painted badge.
+pub fn paint_nostr_badge_at(painter: &egui::Painter, pos: egui::Pos2) -> f32 {
+    let fg = BADGE_NOSTR_TEXT;
+    let galley = painter.layout_no_wrap("nostr".to_string(), FontId::proportional(10.0), fg);
     let text_size = galley.size();
     let pad_x = 7.0;
     let pad_y = 2.0;
     let badge_w = text_size.x + 2.0 * pad_x;
     let badge_h = text_size.y + 2.0 * pad_y;
     let rect = egui::Rect::from_min_size(pos, egui::vec2(badge_w, badge_h));
-    painter.rect_filled(rect, CornerRadius::same(4), bg);
+    painter.rect_filled(rect, CornerRadius::same(4), badge_nostr_bg());
     painter.galley(egui::Pos2::new(pos.x + pad_x, pos.y + pad_y), galley, fg);
     badge_w
 }
 
 /// Paint an avatar into an existing rect using raw painter calls.
-/// Shared by both `render_avatar` (egui layout) and custom-painter rows (inbox).
+/// Shared by custom-painter rows and manually laid-out avatar slots.
 pub fn paint_avatar(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -273,17 +266,6 @@ pub fn boxed_password_text_edit(
     hint: impl Into<egui::WidgetText>,
     font_size: f32,
 ) -> egui::Response {
-    boxed_text_edit_impl(ui, id, text, hint, font_size, true)
-}
-
-fn boxed_text_edit_impl(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    text: &mut String,
-    hint: impl Into<egui::WidgetText>,
-    font_size: f32,
-    password: bool,
-) -> egui::Response {
     let height = 30.0;
     let (outer_rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
@@ -322,7 +304,7 @@ fn boxed_text_edit_impl(
         egui::TextEdit::singleline(text)
             .id(id)
             .hint_text(hint)
-            .password(password)
+            .password(true)
             .frame(false)
             .font(FontId::proportional(font_size))
             .text_color(TEXT)
@@ -337,20 +319,9 @@ pub fn underline_text_edit(
     hint: impl Into<egui::WidgetText>,
     font_size: f32,
 ) -> egui::Response {
-    underline_text_edit_impl(ui, text, hint, font_size, false)
-}
-
-fn underline_text_edit_impl(
-    ui: &mut egui::Ui,
-    text: &mut String,
-    hint: impl Into<egui::WidgetText>,
-    font_size: f32,
-    password: bool,
-) -> egui::Response {
     let response = ui.add(
         egui::TextEdit::singleline(text)
             .hint_text(hint)
-            .password(password)
             .frame(false)
             .font(FontId::proportional(font_size))
             .text_color(TEXT)
