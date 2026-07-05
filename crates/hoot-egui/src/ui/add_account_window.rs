@@ -215,23 +215,14 @@ impl AddAccountWindow {
             app.page = Page::Onboarding;
         }
 
-        if is_onboarding
-            && !matches!(
-                app.page,
-                Page::OnboardingNewUser
-            )
-        {
+        if is_onboarding && !matches!(app.page, Page::OnboardingNewUser) {
             return false;
         }
 
         keep_open && !close_clicked && !should_close_from_save
     }
 
-    fn render_window_header(
-        ui: &mut egui::Ui,
-        close_clicked: &mut bool,
-        is_onboarding: bool,
-    ) {
+    fn render_window_header(ui: &mut egui::Ui, close_clicked: &mut bool, is_onboarding: bool) {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             ui.add_space(18.0);
@@ -362,7 +353,6 @@ impl AddAccountWindow {
         state: &mut AddAccountWindowState,
         is_onboarding: bool,
     ) {
-
         if !is_onboarding {
             if matches!(
                 state.step,
@@ -533,7 +523,7 @@ impl AddAccountWindow {
             .unwrap()
             .db_password_input = password.clone();
 
-        let mut should_close = false;
+        let should_close = false;
         let submit_via_enter =
             password_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -559,9 +549,7 @@ impl AddAccountWindow {
                 }
             }
 
-            if is_onboarding
-                && style::pointer(ui.add(Self::secondary_button("Back"))).clicked()
-            {
+            if is_onboarding && style::pointer(ui.add(Self::secondary_button("Back"))).clicked() {
                 app.page = Page::Onboarding;
                 let state = app.state.add_account_window.get_mut(&id).unwrap();
                 state.error_message = None;

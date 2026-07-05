@@ -136,7 +136,7 @@ fn render_message_row(app: &mut Hoot, ui: &mut egui::Ui, entry: &TableEntry, ava
 
     // Compute initials and paint avatar via shared component
     let initials = style::initials_for_name(&sender_name);
-    style::paint_avatar(&painter, avatar_rect, &initials, None);
+    style::paint_avatar(painter, avatar_rect, &initials, None);
 
     // Text column starts after avatar + gap
     let text_left = avatar_left + avatar_size + avatar_gap;
@@ -209,7 +209,7 @@ fn render_message_row(app: &mut Hoot, ui: &mut egui::Ui, entry: &TableEntry, ava
     // Badge row — 5px below preview, matching HTML .message-footer margin-top: 5px
     let badge_y = row3_y + preview_galley.size().y + 5.0;
     style::paint_badge_at(
-        &painter,
+        painter,
         Pos2::new(text_left, badge_y),
         style::BadgeKind::Nostr,
     );

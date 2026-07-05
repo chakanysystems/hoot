@@ -12,7 +12,7 @@ impl Db {
     pub fn get_pubkeys(&self) -> Result<Vec<String>> {
         let mut stmt = self.connection.prepare("SELECT pubkey FROM pubkeys;")?;
 
-        let pubkeys_iter = stmt.query_map([], |row| Ok(row.get(0)?))?;
+        let pubkeys_iter = stmt.query_map([], |row| row.get(0))?;
         let pubkeys = pubkeys_iter.collect::<Result<Vec<String>, rusqlite::Error>>()?;
         Ok(pubkeys)
     }

@@ -489,10 +489,7 @@ fn render_left_panel(app: &mut Hoot, ctx: &egui::Context) {
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
     let unlock_window_id = egui::Id::new(ui::unlock_window::UNLOCK_WINDOW_ID);
     if app.page == Page::Unlock {
-        app.state
-            .unlock_window
-            .entry(unlock_window_id)
-            .or_insert_with(Default::default);
+        app.state.unlock_window.entry(unlock_window_id).or_default();
     } else {
         app.state.unlock_window.remove(&unlock_window_id);
     }
@@ -526,23 +523,12 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         app.state.compose_window.remove(&id);
     }
 
-    match app.page {
-        Page::Unlock => {}
-        Page::Onboarding
-        | Page::OnboardingNewUser
-        | Page::OnboardingNewShowKey
-        | Page::OnboardingRelay
-        | Page::OnboardingReady => {}
-        _ => render_left_panel(app, ctx),
+    if app.page.shows_chrome() {
+        render_left_panel(app, ctx);
     }
 
-    match app.page {
-        Page::Unlock
-        | Page::Onboarding
-        | Page::OnboardingNewUser
-        | Page::OnboardingNewShowKey
-        | Page::OnboardingReady => {}
-        _ => ui::search::render_global_search_bar(app, ctx),
+    if app.page.shows_chrome() {
+        ui::search::render_global_search_bar(app, ctx);
     }
 
     egui::CentralPanel::default().show(ctx, |ui| match app.page {
@@ -555,7 +541,9 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         Page::Contacts => ui::contacts::render_contacts_page(app, ui),
         Page::Settings => ui::settings::SettingsScreen::ui(app, ui),
         Page::SearchResults => ui::search::render_search_results(app, ui),
-        Page::Unlock => {}
+        Page::Unlock => {
+            ui.allocate_space(ui.available_size());
+        }
         Page::Onboarding
         | Page::OnboardingNewUser
         | Page::OnboardingNewShowKey

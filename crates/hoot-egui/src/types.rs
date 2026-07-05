@@ -31,9 +31,17 @@ impl Page {
     pub fn shows_chrome(&self) -> bool {
         matches!(
             self,
-            Page::Inbox | Page::Drafts | Page::Starred | Page::Archived
-                | Page::Trash | Page::Requests | Page::Junk | Page::Contacts
-                | Page::Settings | Page::Post | Page::SearchResults
+            Page::Inbox
+                | Page::Drafts
+                | Page::Starred
+                | Page::Archived
+                | Page::Trash
+                | Page::Requests
+                | Page::Junk
+                | Page::Contacts
+                | Page::Settings
+                | Page::Post
+                | Page::SearchResults
         )
     }
 }
@@ -81,24 +89,13 @@ pub enum HootStatus {
     Ready,
 }
 
+#[derive(Default)]
 pub struct SearchState {
     pub query: String,
     pub last_executed_query: String,
     pub results: Vec<TableEntry>,
     pub last_query_time: Option<Instant>,
     pub selected_suggestion: Option<usize>,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            last_executed_query: String::new(),
-            results: Vec::new(),
-            last_query_time: None,
-            selected_suggestion: None,
-        }
-    }
 }
 
 impl SearchState {

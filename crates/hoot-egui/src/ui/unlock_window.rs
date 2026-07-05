@@ -1,5 +1,5 @@
 use crate::{style, HootStatus, Page};
-use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, Vec2};
 use tracing::error;
 
 pub const UNLOCK_WINDOW_ID: &str = "unlock_window";
@@ -17,8 +17,8 @@ impl UnlockWindow {
     /// Returns false if the window should be closed.
     pub fn show_window(app: &mut crate::Hoot, ctx: &egui::Context, id: egui::Id) -> bool {
         let screen_rect = ctx.viewport_rect();
-        let window_width = (screen_rect.width() - 64.0).min(720.0).max(560.0);
-        let window_height = (screen_rect.height() - 64.0).min(760.0).max(480.0);
+        let window_width = (screen_rect.width() - 64.0).clamp(560.0, 720.0);
+        let window_height = (screen_rect.height() - 64.0).clamp(480.0, 760.0);
 
         let mut keep_open = true;
 
@@ -111,14 +111,15 @@ impl UnlockWindow {
                         state.password_input = password.clone();
                     }
 
-                    let submit_via_enter =
-                        password_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let submit_via_enter = password_response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let can_unlock = !password.is_empty();
-                        let unlock_clicked =
-                            style::pointer(ui.add_enabled(can_unlock, Self::primary_button("Unlock")))
-                                .clicked();
+                        let unlock_clicked = style::pointer(
+                            ui.add_enabled(can_unlock, Self::primary_button("Unlock")),
+                        )
+                        .clicked();
                         if unlock_clicked || (submit_via_enter && can_unlock) {
                             match app.backend.unlock_database(password.clone()) {
                                 Ok(_) => {

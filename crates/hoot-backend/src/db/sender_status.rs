@@ -9,6 +9,8 @@ pub enum SenderStatus {
     Junked,
 }
 
+pub type SenderStatusRow = (String, Option<String>, Option<String>, Option<String>, i64);
+
 impl SenderStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -54,10 +56,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_senders_by_status(
-        &self,
-        status: &SenderStatus,
-    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>, i64)>> {
+    pub fn get_senders_by_status(&self, status: &SenderStatus) -> Result<Vec<SenderStatusRow>> {
         let mut stmt = self.connection.prepare(
             "SELECT ss.pubkey, pm.name, pm.display_name, pm.picture, ss.created_at
              FROM sender_status ss

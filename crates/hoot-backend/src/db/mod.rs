@@ -16,7 +16,7 @@ mod nip05;
 mod queries;
 pub mod sender_status;
 
-pub use drafts::Draft;
+pub use drafts::{Draft, DraftUpdate};
 
 static MIGRATIONS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 

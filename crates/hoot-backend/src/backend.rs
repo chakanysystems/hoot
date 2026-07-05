@@ -328,15 +328,15 @@ impl HootBackend {
         let inner = self.lock_inner()?;
         inner
             .db
-            .update_draft(
-                draft.id,
-                &draft.subject,
-                &draft.to_field,
-                &draft.content,
-                &draft.parent_events,
-                draft.selected_account.as_deref(),
-                draft.selected_nip05.as_deref(),
-            )
+            .update_draft(db::DraftUpdate {
+                id: draft.id,
+                subject: &draft.subject,
+                to_field: &draft.to_field,
+                content: &draft.content,
+                parent_events: &draft.parent_events,
+                selected_account: draft.selected_account.as_deref(),
+                selected_nip05: draft.selected_nip05.as_deref(),
+            })
             .map_err(database_error)
     }
 
@@ -465,11 +465,16 @@ impl HootBackend {
 
     pub fn get_nip05_resolution(&self, nip05: String) -> HootResult<Option<Nip05ResolutionDto>> {
         let inner = self.lock_inner()?;
-        Ok(inner.nip05_resolver.get(&nip05).map(|resolution| match resolution {
-            Nip05Resolution::Pending => Nip05ResolutionDto::Pending,
-            Nip05Resolution::Resolved(pubkey_hex) => Nip05ResolutionDto::Resolved { pubkey_hex: pubkey_hex.clone() },
-            Nip05Resolution::Failed => Nip05ResolutionDto::Failed,
-        }))
+        Ok(inner
+            .nip05_resolver
+            .get(&nip05)
+            .map(|resolution| match resolution {
+                Nip05Resolution::Pending => Nip05ResolutionDto::Pending,
+                Nip05Resolution::Resolved(pubkey_hex) => Nip05ResolutionDto::Resolved {
+                    pubkey_hex: pubkey_hex.clone(),
+                },
+                Nip05Resolution::Failed => Nip05ResolutionDto::Failed,
+            }))
     }
 
     pub fn get_profile_metadata(&self, pubkey_hex: String) -> HootResult<Option<ProfileMetadata>> {
@@ -639,14 +644,6 @@ struct RecipientResolution {
     public_keys: Vec<PublicKey>,
     pending_nip05: Vec<String>,
     failed_nip05: Vec<String>,
-}
-
-fn process_verification_queue(inner: &mut BackendInner) -> bool {
-    inner.nip05_verifier.process_queue(&inner.db)
-}
-
-fn process_resolution_queue(inner: &mut BackendInner) -> bool {
-    inner.nip05_resolver.process_queue()
 }
 
 fn load_profile_metadata_cache(inner: &mut BackendInner) -> HootResult<()> {

@@ -1,13 +1,8 @@
 pub use crate::dto::ProfileMetadata;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum ProfileOption {
+    #[default]
     Waiting,
     Some(ProfileMetadata),
-}
-
-impl Default for ProfileOption {
-    fn default() -> Self {
-        Self::Waiting
-    }
 }

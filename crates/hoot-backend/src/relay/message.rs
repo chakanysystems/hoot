@@ -21,7 +21,6 @@ pub enum RelayMessage<'a> {
     Auth(&'a str),
 }
 
-
 fn split_relay_array_fields(msg: &str) -> Option<Vec<&str>> {
     if !(msg.starts_with('[') && msg.ends_with(']')) {
         return None;

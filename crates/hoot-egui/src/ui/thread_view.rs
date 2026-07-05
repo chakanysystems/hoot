@@ -256,7 +256,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
 
             let available = ui.available_width();
             let content_width = available.min(640.0);
-            let h_pad = ((available - content_width) / 2.0).max(0.0).min(120.0) as i8;
+            let h_pad = ((available - content_width) / 2.0).clamp(0.0, 120.0) as i8;
 
             Frame::new()
                 .inner_margin(Margin {
@@ -267,7 +267,7 @@ pub fn render(app: &mut Hoot, ui: &mut egui::Ui) {
                 })
                 .show(ui, |ui| {
                     if let Some(pubkey) = &thread_sender {
-                        match sender_status.as_deref() {
+                        match sender_status {
                             Some("request") => {
                                 sender_prompt(
                                     app,

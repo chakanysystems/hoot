@@ -13,11 +13,11 @@ mod recipient;
 mod relay;
 
 pub use backend::HootBackend;
+pub use conversions::npub_string;
 pub use dto::*;
 pub use error::{HootError, HootResult};
 pub use profile_metadata::ProfileOption;
 pub use recipient::{normalize_nip05_identifier, parse_recipient_token, ParsedRecipient};
-pub use conversions::npub_string;
 pub use relay::default_relay_urls;
 
 #[cfg(debug_assertions)]

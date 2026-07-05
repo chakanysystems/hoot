@@ -43,14 +43,6 @@ pub fn badge_nostr_bg() -> Color32 {
     Color32::from_rgba_unmultiplied(37, 99, 235, 20)
 }
 pub const BADGE_NOSTR_TEXT: Color32 = ACCENT;
-pub fn badge_pgp_bg() -> Color32 {
-    Color32::from_rgba_unmultiplied(22, 163, 74, 20)
-}
-pub const BADGE_PGP_TEXT: Color32 = GREEN;
-pub fn badge_smtp_bg() -> Color32 {
-    Color32::from_rgba_unmultiplied(0, 0, 0, 13)
-}
-pub const BADGE_SMTP_TEXT: Color32 = TEXT2;
 
 // Avatar gradient approximations (solid first stop)
 pub const AV_BLUE_BG: Color32 = Color32::from_rgb(219, 234, 254);
@@ -73,14 +65,6 @@ pub const INBOX_ROW_HEIGHT: f32 = 96.0;
 
 // ── Shadows ──────────────────────────────────────────────────────────────────
 
-pub fn shadow_sm() -> Shadow {
-    Shadow {
-        offset: [0, 1],
-        blur: 2,
-        spread: 0,
-        color: Color32::from_black_alpha(15),
-    }
-}
 pub fn shadow_md() -> Shadow {
     Shadow {
         offset: [0, 2],
@@ -217,13 +201,16 @@ pub fn avatar_color_for_initials(initials: &str) -> (Color32, Color32) {
     }
 }
 
+/// Badge protocol type.
+#[derive(Clone, Copy)]
+pub enum BadgeKind {
+    Nostr,
+}
 /// Paint a protocol badge at a given position using raw painter calls.
 /// Returns the width of the painted badge (for chaining multiple badges).
 pub fn paint_badge_at(painter: &egui::Painter, pos: egui::Pos2, kind: BadgeKind) -> f32 {
     let (label, bg, fg) = match kind {
         BadgeKind::Nostr => ("nostr", badge_nostr_bg(), BADGE_NOSTR_TEXT),
-        BadgeKind::Pgp => ("pgp", badge_pgp_bg(), BADGE_PGP_TEXT),
-        BadgeKind::Smtp => ("smtp", badge_smtp_bg(), BADGE_SMTP_TEXT),
     };
     let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(10.0), fg);
     let text_size = galley.size();
@@ -276,57 +263,6 @@ pub fn paint_avatar(
             fg,
         );
     }
-}
-
-/// Render a 34×34 rounded avatar with initials (or image if provided).
-pub fn render_avatar(ui: &mut egui::Ui, initials: &str, image: Option<&egui::TextureHandle>) {
-    let size = Vec2::splat(AVATAR_SIZE);
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-    if ui.is_rect_visible(rect) {
-        paint_avatar(ui.painter(), rect, initials, image);
-    }
-}
-
-/// Badge protocol type.
-#[derive(Clone, Copy)]
-pub enum BadgeKind {
-    Nostr,
-    Pgp,
-    Smtp,
-}
-
-/// Render a protocol badge inline.
-pub fn render_badge(ui: &mut egui::Ui, kind: BadgeKind) {
-    let (label, bg, fg) = match kind {
-        BadgeKind::Nostr => ("nostr", badge_nostr_bg(), BADGE_NOSTR_TEXT),
-        BadgeKind::Pgp => ("pgp", badge_pgp_bg(), BADGE_PGP_TEXT),
-        BadgeKind::Smtp => ("smtp", badge_smtp_bg(), BADGE_SMTP_TEXT),
-    };
-    let frame = egui::Frame::new()
-        .fill(bg)
-        .stroke(Stroke::NONE)
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin {
-            left: 7,
-            right: 7,
-            top: 2,
-            bottom: 2,
-        });
-    frame.show(ui, |ui| {
-        ui.label(egui::RichText::new(label).size(10.0).color(fg).strong());
-    });
-}
-
-/// Boxed TextEdit — rounded border that glows accent on focus, matching the search bar style.
-/// Requires a stable `id` so focus state can be queried before painting.
-pub fn boxed_text_edit(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    text: &mut String,
-    hint: impl Into<egui::WidgetText>,
-    font_size: f32,
-) -> egui::Response {
-    boxed_text_edit_impl(ui, id, text, hint, font_size, false)
 }
 
 /// Boxed TextEdit for secrets (masked).
@@ -433,6 +369,3 @@ fn underline_text_edit_impl(
     );
     response
 }
-
-// Compatibility aliases for split-layout UI modules that still use the pre-redesign names.
-pub const ACCENT_LIGHT: Color32 = Color32::from_rgb(232, 224, 245);

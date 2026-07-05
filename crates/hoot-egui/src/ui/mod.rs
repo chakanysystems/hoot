@@ -48,4 +48,3 @@ pub fn empty_state(ui: &mut egui::Ui, message: &str) {
 
 pub mod nip05_status;
 pub mod unlock_window;
-

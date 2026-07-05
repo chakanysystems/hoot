@@ -60,7 +60,7 @@ impl OnboardingScreen {
         app.state
             .add_account_window
             .entry(onboarding_window_id)
-            .or_insert_with(super::add_account_window::AddAccountWindowState::default);
+            .or_default();
 
         ui.label(
             RichText::new("Set up your account")
@@ -145,9 +145,10 @@ fn render_show_key(app: &mut Hoot, ui: &mut egui::Ui) {
     let onboarding_window_id =
         egui::Id::new(super::add_account_window::ONBOARDING_ADD_ACCOUNT_WINDOW_ID);
     if let Some(state) = app.state.add_account_window.get(&onboarding_window_id) {
-        if let (Some(account), Some(nsec)) =
-            (state.generated_account.clone(), state.generated_nsec.clone())
-        {
+        if let (Some(account), Some(nsec)) = (
+            state.generated_account.clone(),
+            state.generated_nsec.clone(),
+        ) {
             let mut npub_clone = account.npub;
             ui.label(
                 RichText::new("Your address (share this freely)")

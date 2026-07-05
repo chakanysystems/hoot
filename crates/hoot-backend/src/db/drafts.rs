@@ -15,6 +15,16 @@ pub struct Draft {
     pub updated_at: i64,
 }
 
+pub struct DraftUpdate<'a> {
+    pub id: i64,
+    pub subject: &'a str,
+    pub to_field: &'a str,
+    pub content: &'a str,
+    pub parent_events: &'a [String],
+    pub selected_account: Option<&'a str>,
+    pub selected_nip05: Option<&'a str>,
+}
+
 impl Db {
     pub fn save_draft(
         &self,
@@ -41,29 +51,20 @@ impl Db {
         Ok(self.connection.last_insert_rowid())
     }
 
-    pub fn update_draft(
-        &self,
-        id: i64,
-        subject: &str,
-        to_field: &str,
-        content: &str,
-        parent_events: &[String],
-        selected_account: Option<&str>,
-        selected_nip05: Option<&str>,
-    ) -> Result<()> {
-        let parent_events_json = serde_json::to_string(parent_events)?;
+    pub fn update_draft(&self, draft: DraftUpdate<'_>) -> Result<()> {
+        let parent_events_json = serde_json::to_string(draft.parent_events)?;
         self.connection.execute(
             "UPDATE drafts SET subject = ?1, to_field = ?2, content = ?3,
              parent_events = ?4, selected_account = ?5, selected_nip05 = ?6, updated_at = unixepoch()
              WHERE id = ?7",
             (
-                subject,
-                to_field,
-                content,
+                draft.subject,
+                draft.to_field,
+                draft.content,
                 &parent_events_json,
-                selected_account,
-                selected_nip05,
-                id,
+                draft.selected_account,
+                draft.selected_nip05,
+                draft.id,
             ),
         )?;
         Ok(())
@@ -141,15 +142,15 @@ mod tests {
         assert_eq!(db.get_draft_count()?, 2);
 
         let replacement_parents = vec!["new-root".to_string(), "new-reply".to_string()];
-        db.update_draft(
-            first_id,
-            "Updated subject",
-            "dave@example.com",
-            "Updated body",
-            &replacement_parents,
-            Some("account-b"),
-            Some("dave@example.com"),
-        )?;
+        db.update_draft(DraftUpdate {
+            id: first_id,
+            subject: "Updated subject",
+            to_field: "dave@example.com",
+            content: "Updated body",
+            parent_events: &replacement_parents,
+            selected_account: Some("account-b"),
+            selected_nip05: Some("dave@example.com"),
+        })?;
         db.connection.execute(
             "UPDATE drafts SET updated_at = CASE id WHEN ?1 THEN 300 WHEN ?2 THEN 200 END",
             (first_id, second_id),

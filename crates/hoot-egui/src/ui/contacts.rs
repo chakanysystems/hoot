@@ -64,8 +64,7 @@ impl ContactsManager {
                 metadata: contact.metadata,
             })
             .collect();
-        self.contacts
-            .sort_by(|a, b| contact_sort_key(a).cmp(&contact_sort_key(b)));
+        self.contacts.sort_by_key(contact_sort_key);
         for contact in &self.contacts {
             profile_cache.insert(
                 contact.pubkey.clone(),
@@ -81,8 +80,7 @@ impl ContactsManager {
             if previous_picture != existing.metadata.picture {
                 self.image_loader.invalidate(&existing.pubkey);
             }
-            self.contacts
-                .sort_by(|a, b| contact_sort_key(a).cmp(&contact_sort_key(b)));
+            self.contacts.sort_by_key(contact_sort_key);
         }
     }
 
@@ -241,7 +239,7 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                             app.state.contacts.editing_pubkey.as_ref() == Some(&contact.pubkey);
 
                         let available_width = ui.available_width();
-                        let row_height = if is_editing { 56.0 } else { 56.0 };
+                        let row_height = 56.0;
 
                         let (row_rect, _) = ui.allocate_exact_size(
                             egui::Vec2::new(available_width, row_height),
@@ -272,7 +270,7 @@ pub fn render_contacts_page(app: &mut crate::Hoot, ui: &mut egui::Ui) {
                         );
                         let initials = contact.initials();
                         let image = app.contacts_manager.get_contact_image(&contact.pubkey);
-                        style::paint_avatar(ui.painter(), avatar_rect, &initials, image.as_deref());
+                        style::paint_avatar(ui.painter(), avatar_rect, &initials, image);
 
                         // Text — constrained to not overlap button area
                         let text_left = avatar_left + avatar_size + 10.0;

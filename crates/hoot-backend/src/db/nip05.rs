@@ -76,7 +76,7 @@ impl Db {
         )?;
 
         let entries = stmt
-            .query_map([pubkey], |row| nip05_entry_from_row(row))?
+            .query_map([pubkey], nip05_entry_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         Ok(entries)
@@ -103,9 +103,7 @@ impl Db {
                       LIMIT 1",
         )?;
 
-        let entry = stmt
-            .query_one([pubkey], |row| nip05_entry_from_row(row))
-            .optional()?;
+        let entry = stmt.query_one([pubkey], nip05_entry_from_row).optional()?;
 
         Ok(entry)
     }

@@ -10,6 +10,14 @@ use nostr::{Event, Kind, TagKind};
 use std::collections::HashSet;
 use tracing::{debug, warn};
 
+pub(crate) fn process_verification_queue(inner: &mut BackendInner) -> bool {
+    inner.nip05_verifier.process_queue(&inner.db)
+}
+
+pub(crate) fn process_resolution_queue(inner: &mut BackendInner) -> bool {
+    inner.nip05_resolver.process_queue()
+}
+
 pub(crate) fn process_message(
     inner: &mut BackendInner,
     relay_url: &str,
@@ -236,10 +244,7 @@ pub(crate) fn process_event(
         if rumor.kind == Kind::Custom(MAIL_EVENT_KIND) {
             if let Some(nip05_tag) = rumor.tags.find(TagKind::custom("nip05")) {
                 if let Some(nip05_value) = nip05_tag.content() {
-                    cache_and_verify_nip05(inner,
-                    nip05_value,
-                    &rumor.pubkey.to_string(),
-                    false,)?;
+                    cache_and_verify_nip05(inner, nip05_value, &rumor.pubkey.to_string(), false)?;
                 }
             }
         }
@@ -274,30 +279,27 @@ pub(crate) fn apply_deletions(
     let mut scoped_event_ids = Vec::new();
     let mut unscoped_event_ids = Vec::new();
     for event_id in event_ids {
-        match inner
+        if let Some((kind, pubkey)) = inner
             .db
             .get_event_kind_pubkey(&event_id)
             .map_err(database_error)?
         {
-            Some((kind, pubkey)) => {
-                let is_gift_wrap = kind == i64::from(Kind::GiftWrap.as_u16());
-                let is_mail = kind == i64::from(MAIL_EVENT_KIND);
-                if is_gift_wrap {
-                    continue;
-                }
-                if is_mail {
-                    if let Some(author) = author_pubkey {
-                        if author == pubkey {
-                            scoped_event_ids.push(event_id);
-                        }
-                    } else {
-                        unscoped_event_ids.push(event_id);
+            let is_gift_wrap = kind == i64::from(Kind::GiftWrap.as_u16());
+            let is_mail = kind == i64::from(MAIL_EVENT_KIND);
+            if is_gift_wrap {
+                continue;
+            }
+            if is_mail {
+                if let Some(author) = author_pubkey {
+                    if author == pubkey {
+                        scoped_event_ids.push(event_id);
                     }
                 } else {
                     unscoped_event_ids.push(event_id);
                 }
+            } else {
+                unscoped_event_ids.push(event_id);
             }
-            None => {}
         }
     }
 
@@ -435,8 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_deletions_scopes_mail_by_author_unscopes_non_mail_and_marks_wraps() -> HootResult<()>
-    {
+    fn apply_deletions_scopes_mail_by_author_unscopes_non_mail_and_marks_wraps() -> HootResult<()> {
         let mut inner = test_inner()?;
         let author = Keys::generate();
         let other = Keys::generate();
