@@ -1355,3 +1355,513 @@ fn apply_deletions(
         .retain(|event| !removed_ids.contains(&event.id.to_string()));
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_storage_dir(name: &str) -> HootResult<PathBuf> {
+        let dir = std::env::temp_dir().join(format!(
+            "hoot-backend-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| HootError::Database {
+                    message: err.to_string(),
+                })?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|err| HootError::Database {
+            message: err.to_string(),
+        })?;
+        Ok(dir)
+    }
+
+    fn test_inner() -> HootResult<BackendInner> {
+        Ok(BackendInner {
+            storage_dir: PathBuf::new(),
+            db: Db::new_in_memory().map_err(database_error)?,
+            relays: relay::RelayPool::new(),
+            events: Vec::new(),
+            account_manager: AccountManager::new(),
+            active_account_pubkey: None,
+            profile_metadata: HashMap::new(),
+            nip05_verifier: Nip05Verifier::new(),
+            nip05_resolver: Nip05Resolver::new(),
+            wake_up: Arc::new(|| {}),
+        })
+    }
+
+    fn test_backend_with_inner(inner: BackendInner) -> HootBackend {
+        HootBackend {
+            inner: Mutex::new(inner),
+        }
+    }
+
+    fn compose_input(
+        to_field: impl Into<String>,
+        selected_account_pubkey: Option<String>,
+    ) -> ComposeMessageInput {
+        ComposeMessageInput {
+            subject: "Subject".to_string(),
+            content: "Body".to_string(),
+            to_field: to_field.into(),
+            parent_event_ids: Vec::new(),
+            selected_account_pubkey,
+            selected_nip05: None,
+        }
+    }
+
+    fn signed_event(keys: &Keys, kind: Kind, content: impl Into<String>) -> Event {
+        EventBuilder::new(kind, content)
+            .sign_with_keys(keys)
+            .expect("event should sign")
+    }
+
+    #[test]
+    fn backend_onboarding_and_database_password_state_are_file_backed() -> HootResult<()> {
+        let dir = temp_storage_dir("state")?;
+        let backend = HootBackend::open(dir.to_string_lossy().into_owned())?;
+
+        assert!(!backend.onboarding_complete()?);
+        assert!(!backend.db_file_has_password()?);
+        assert!(!backend.is_database_initialized()?);
+
+        backend.mark_onboarding_complete()?;
+        assert!(backend.onboarding_complete()?);
+
+        backend.unlock_database("correct-password".to_string())?;
+        assert!(backend.db_file_has_password()?);
+        assert!(backend.is_database_initialized()?);
+
+        std::fs::remove_dir_all(dir).map_err(|err| HootError::Database {
+            message: err.to_string(),
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn backend_maps_wrong_database_password_to_domain_error() -> HootResult<()> {
+        let dir = temp_storage_dir("wrong-password")?;
+        {
+            let backend = HootBackend::open(dir.to_string_lossy().into_owned())?;
+            backend.unlock_database("correct-password".to_string())?;
+        }
+        let backend = HootBackend::open(dir.to_string_lossy().into_owned())?;
+
+        let err = backend
+            .unlock_database("wrong-password".to_string())
+            .unwrap_err();
+
+        assert!(matches!(err, HootError::WrongPassword));
+        std::fs::remove_dir_all(dir).map_err(|err| HootError::Database {
+            message: err.to_string(),
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn draft_contact_and_mail_message_dtos_preserve_backend_fields() -> HootResult<()> {
+        let draft = db::Draft {
+            id: 7,
+            subject: "Subject".to_string(),
+            to_field: "alice@example.com".to_string(),
+            content: "Body".to_string(),
+            parent_events: vec!["parent-a".to_string(), "parent-b".to_string()],
+            selected_account: Some("account".to_string()),
+            selected_nip05: Some("sender@example.com".to_string()),
+            created_at: 10,
+            updated_at: 20,
+        };
+        let drafts = draft_dtos(vec![draft]);
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].id, 7);
+        assert_eq!(drafts[0].subject, "Subject");
+        assert_eq!(drafts[0].to_field, "alice@example.com");
+        assert_eq!(drafts[0].content, "Body");
+        assert_eq!(drafts[0].parent_events, vec!["parent-a", "parent-b"]);
+        assert_eq!(drafts[0].selected_account.as_deref(), Some("account"));
+        assert_eq!(
+            drafts[0].selected_nip05.as_deref(),
+            Some("sender@example.com")
+        );
+        assert_eq!(drafts[0].created_at, 10);
+        assert_eq!(drafts[0].updated_at, 20);
+
+        let metadata = ProfileMetadata {
+            name: Some("alice".to_string()),
+            display_name: Some("Alice".to_string()),
+            picture: Some("https://example.com/alice.png".to_string()),
+            nip05: Some("alice@example.com".to_string()),
+        };
+        let contacts = contact_dtos(vec![(
+            "pubkey".to_string(),
+            Some("Pet".to_string()),
+            metadata.clone(),
+        )])?;
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0].pubkey, "pubkey");
+        assert_eq!(contacts[0].petname.as_deref(), Some("Pet"));
+        assert_eq!(contacts[0].metadata, metadata);
+
+        let author = Keys::generate();
+        let recipient = Keys::generate();
+        let parent =
+            EventId::from_hex("1111111111111111111111111111111111111111111111111111111111111111")
+                .map_err(nostr_error)?;
+        let message = MailMessage {
+            id: Some(parent),
+            created_at: Some(123),
+            author: Some(author.public_key()),
+            to: vec![recipient.public_key()],
+            cc: vec![author.public_key()],
+            bcc: vec![recipient.public_key()],
+            parent_events: Some(vec![parent]),
+            subject: "Mail".to_string(),
+            content: "Content".to_string(),
+            sender_nip05: Some("sender@example.com".to_string()),
+        };
+        let dto = mail_message_dto(message);
+        let parent_hex = parent.to_hex();
+        let author_hex = author.public_key().to_hex();
+        assert_eq!(dto.id.as_deref(), Some(parent_hex.as_str()));
+        assert_eq!(dto.created_at, Some(123));
+        assert_eq!(dto.author_pubkey.as_deref(), Some(author_hex.as_str()));
+        assert_eq!(dto.to_pubkeys, vec![recipient.public_key().to_hex()]);
+        assert_eq!(dto.cc_pubkeys, vec![author.public_key().to_hex()]);
+        assert_eq!(dto.bcc_pubkeys, vec![recipient.public_key().to_hex()]);
+        assert_eq!(dto.parent_event_ids, vec![parent.to_hex()]);
+        assert_eq!(dto.subject, "Mail");
+        assert_eq!(dto.content, "Content");
+        assert_eq!(dto.sender_nip05.as_deref(), Some("sender@example.com"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn parser_and_enum_mapping_helpers_accept_valid_values_and_reject_invalid_values(
+    ) -> HootResult<()> {
+        let keys = Keys::generate();
+        let hex = keys.public_key().to_hex();
+        let npub = keys.public_key().to_bech32().map_err(nostr_error)?;
+        assert_eq!(parse_public_key(&hex)?, keys.public_key());
+        assert_eq!(parse_public_key(&npub)?, keys.public_key());
+        assert!(matches!(
+            parse_public_key("not-a-key"),
+            Err(HootError::Nostr { .. })
+        ));
+
+        let event_id =
+            EventId::from_hex("2222222222222222222222222222222222222222222222222222222222222222")
+                .map_err(nostr_error)?;
+        assert_eq!(parse_event_ids(vec![event_id.to_hex()])?, vec![event_id]);
+        assert!(matches!(
+            parse_event_ids(vec!["not-an-event-id".to_string()]),
+            Err(HootError::Nostr { .. })
+        ));
+
+        assert_eq!(
+            sender_status(SenderStatusDto::Allowed),
+            SenderStatus::Allowed
+        );
+        assert_eq!(sender_status(SenderStatusDto::Junked), SenderStatus::Junked);
+        assert_eq!(
+            sender_status_dto(SenderStatus::Allowed),
+            SenderStatusDto::Allowed
+        );
+        assert_eq!(
+            sender_status_dto(SenderStatus::Junked),
+            SenderStatusDto::Junked
+        );
+        assert!(matches!(
+            relay_connection_status(RelayStatus::Connecting),
+            RelayConnectionStatus::Connecting
+        ));
+        assert!(matches!(
+            relay_connection_status(RelayStatus::Connected),
+            RelayConnectionStatus::Connected
+        ));
+        assert!(matches!(
+            relay_connection_status(RelayStatus::Disconnected),
+            RelayConnectionStatus::Disconnected
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn account_summary_uses_profile_display_name_precedence_and_active_marker() {
+        let keys = Keys::generate();
+        let with_display_name = account_summary_for_keys(
+            &keys,
+            Some(ProfileMetadata {
+                name: Some("alice".to_string()),
+                display_name: Some("Alice Display".to_string()),
+                picture: None,
+                nip05: None,
+            }),
+            true,
+        );
+        assert_eq!(with_display_name.pubkey_hex, keys.public_key().to_hex());
+        assert_eq!(
+            with_display_name.display_name.as_deref(),
+            Some("Alice Display")
+        );
+        assert!(with_display_name.is_active);
+
+        let with_name_only = account_summary_for_keys(
+            &keys,
+            Some(ProfileMetadata {
+                name: Some("alice".to_string()),
+                display_name: None,
+                picture: None,
+                nip05: None,
+            }),
+            false,
+        );
+        assert_eq!(with_name_only.display_name.as_deref(), Some("alice"));
+        assert!(!with_name_only.is_active);
+    }
+
+    #[test]
+    fn account_preview_nsec_validates_to_the_preview_summary_without_persisting() -> HootResult<()>
+    {
+        let backend = test_backend_with_inner(test_inner()?);
+
+        let preview = backend.generate_account_preview()?;
+        let validated = account_manager::validate_nsec(&preview.nsec)
+            .map_err(|message| HootError::InvalidNsec { message })?;
+
+        assert_eq!(preview.summary.pubkey_hex, validated.public_key().to_hex());
+        assert_eq!(
+            preview.summary.npub,
+            validated.public_key().to_bech32().map_err(nostr_error)?
+        );
+        assert!(backend.list_accounts()?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn set_active_account_rejects_unknown_pubkey_without_changing_existing_active_account(
+    ) -> HootResult<()> {
+        let mut inner = test_inner()?;
+        let existing = Keys::generate();
+        let existing_pubkey = existing.public_key().to_hex();
+        let missing_pubkey = Keys::generate().public_key().to_hex();
+        inner.account_manager.loaded_keys = vec![existing];
+        inner.active_account_pubkey = Some(existing_pubkey.clone());
+        let backend = test_backend_with_inner(inner);
+
+        let error = backend
+            .set_active_account(Some(missing_pubkey.clone()))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            HootError::NotFound { entity, id }
+                if entity == "account" && id == missing_pubkey
+        ));
+        let accounts = backend.list_accounts()?;
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].pubkey_hex, existing_pubkey);
+        assert!(accounts[0].is_active);
+        Ok(())
+    }
+
+    #[test]
+    fn send_message_reports_missing_account_before_attempting_recipient_resolution(
+    ) -> HootResult<()> {
+        let backend = test_backend_with_inner(test_inner()?);
+
+        let no_active_error = backend
+            .send_message(compose_input("not-a-recipient", None))
+            .unwrap_err();
+        assert!(matches!(
+            no_active_error,
+            HootError::NotFound { entity, id }
+                if entity == "account" && id == "<none>"
+        ));
+
+        let missing_pubkey = Keys::generate().public_key().to_hex();
+        let selected_missing_error = backend
+            .send_message(compose_input(
+                "not-a-recipient",
+                Some(missing_pubkey.clone()),
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            selected_missing_error,
+            HootError::NotFound { entity, id }
+                if entity == "account" && id == missing_pubkey
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn send_message_rejects_empty_resolved_recipient_set_without_touching_relays() -> HootResult<()>
+    {
+        let mut inner = test_inner()?;
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+        inner.account_manager.loaded_keys = vec![keys];
+        inner.active_account_pubkey = Some(pubkey);
+        let backend = test_backend_with_inner(inner);
+
+        let error = backend
+            .send_message(compose_input("not-a-public-key", None))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            HootError::Nostr { message } if message == "No valid recipients"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn send_message_returns_pending_then_failed_for_unresolved_nip05_without_network(
+    ) -> HootResult<()> {
+        let mut inner = test_inner()?;
+        let keys = Keys::generate();
+        let account_pubkey = keys.public_key().to_hex();
+        let unresolved = "bob@@example.com";
+        let (wake_sender, wake_receiver) = std::sync::mpsc::channel();
+        inner.account_manager.loaded_keys = vec![keys];
+        inner.active_account_pubkey = Some(account_pubkey);
+        inner.wake_up = Arc::new(move || {
+            let _ = wake_sender.send(());
+        });
+        let backend = test_backend_with_inner(inner);
+
+        let pending = backend.send_message(compose_input(unresolved, None))?;
+        assert_eq!(pending.sent_count, 0);
+        assert_eq!(pending.pending_nip05, vec![unresolved.to_string()]);
+        assert!(pending.failed_nip05.is_empty());
+
+        wake_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("invalid NIP-05 resolution should complete without network");
+        assert!(backend
+            .tick()?
+            .iter()
+            .any(|event| matches!(event, BackendEvent::NIp05ResultsChanged)));
+
+        let failed = backend.send_message(compose_input(unresolved, None))?;
+        assert_eq!(failed.sent_count, 0);
+        assert!(failed.pending_nip05.is_empty());
+        assert_eq!(failed.failed_nip05, vec![unresolved.to_string()]);
+        Ok(())
+    }
+    #[test]
+    fn process_event_updates_profile_metadata_and_ignores_invalid_events() -> HootResult<()> {
+        let mut inner = test_inner()?;
+        let keys = Keys::generate();
+        let metadata = ProfileMetadata {
+            name: Some("alice".to_string()),
+            display_name: Some("Alice".to_string()),
+            picture: Some("https://example.com/alice.png".to_string()),
+            nip05: Some("alice@example.com".to_string()),
+        };
+        let metadata_event = signed_event(
+            &keys,
+            Kind::Metadata,
+            serde_json::to_string(&metadata).map_err(HootError::from)?,
+        );
+        let raw = serde_json::to_string(&metadata_event).map_err(HootError::from)?;
+
+        assert!(process_event(&mut inner, "metadata", &raw)?);
+        assert_eq!(
+            inner.profile_metadata.get(&keys.public_key().to_hex()),
+            Some(&ProfileOption::Some(metadata.clone()))
+        );
+        assert_eq!(
+            inner
+                .db
+                .get_profile_metadata(&keys.public_key().to_hex())
+                .map_err(database_error)?,
+            Some(metadata)
+        );
+        assert!(!process_event(&mut inner, "metadata", "not json")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn apply_deletions_scopes_mail_by_author_unscopes_non_mail_and_marks_wraps() -> HootResult<()> {
+        let mut inner = test_inner()?;
+        let author = Keys::generate();
+        let other = Keys::generate();
+        let own_mail = signed_event(&author, Kind::Custom(MAIL_EVENT_KIND), "own mail");
+        let other_mail = signed_event(&other, Kind::Custom(MAIL_EVENT_KIND), "other mail");
+        let text_note = signed_event(&other, Kind::TextNote, "text note");
+        let own_mail_id = own_mail.id.to_string();
+        let other_mail_id = other_mail.id.to_string();
+        let text_note_id = text_note.id.to_string();
+
+        for event in [&own_mail, &other_mail, &text_note] {
+            inner
+                .db
+                .store_event(event, None, None)
+                .map_err(database_error)?;
+        }
+        inner
+            .db
+            .save_gift_wrap_map("wrap-own", &own_mail_id, Some("recipient"), 100)
+            .map_err(database_error)?;
+        inner.events = vec![own_mail.clone(), other_mail.clone(), text_note.clone()];
+
+        assert!(apply_deletions(
+            &mut inner,
+            vec![
+                own_mail_id.clone(),
+                other_mail_id.clone(),
+                text_note_id.clone()
+            ],
+            Some(&author.public_key().to_hex()),
+            Some("delete-source"),
+        )?);
+
+        assert!(!inner.db.has_event(&own_mail_id).map_err(database_error)?);
+        assert!(inner.db.has_event(&other_mail_id).map_err(database_error)?);
+        assert!(!inner.db.has_event(&text_note_id).map_err(database_error)?);
+        assert!(inner
+            .db
+            .is_deleted(&own_mail_id, Some(&author.public_key().to_hex()))
+            .map_err(database_error)?);
+        assert!(!inner
+            .db
+            .is_deleted(&other_mail_id, Some(&other.public_key().to_hex()))
+            .map_err(database_error)?);
+        assert!(inner
+            .db
+            .is_deleted(&text_note_id, None)
+            .map_err(database_error)?);
+        assert!(inner
+            .db
+            .is_deleted("wrap-own", None)
+            .map_err(database_error)?);
+        let remaining: Vec<String> = inner
+            .events
+            .iter()
+            .map(|event| event.id.to_string())
+            .collect();
+        assert_eq!(remaining, vec![other_mail_id]);
+
+        Ok(())
+    }
+    #[test]
+    fn dedup_events_returns_each_event_type_once_in_stable_order() {
+        let events = dedup_events(vec![
+            BackendEvent::AccountsChanged,
+            BackendEvent::MailboxesChanged,
+            BackendEvent::AccountsChanged,
+            BackendEvent::NIp05ResultsChanged,
+            BackendEvent::RelayStatusesChanged,
+            BackendEvent::MailboxesChanged,
+        ]);
+
+        assert!(matches!(events[0], BackendEvent::MailboxesChanged));
+        assert!(matches!(events[1], BackendEvent::RelayStatusesChanged));
+        assert!(matches!(events[2], BackendEvent::NIp05ResultsChanged));
+        assert!(matches!(events[3], BackendEvent::AccountsChanged));
+        assert_eq!(events.len(), 4);
+    }
+}

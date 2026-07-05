@@ -169,13 +169,30 @@ mod tests {
     use keyring::credential::{
         Credential, CredentialApi, CredentialBuilderApi, CredentialPersistence,
     };
-    use nostr::{Keys, Kind, TagKind};
+    use nostr::{EventBuilder, Keys, Kind, TagKind, ToBech32};
     use std::collections::HashMap;
-    use std::sync::{LazyLock, Mutex};
+    use std::sync::{LazyLock, Mutex, MutexGuard};
 
     /// Global shared store so credentials persist across Entry instances (like a real keystore).
     static MOCK_STORE: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    /// Serializes tests because keyring's default credential builder and the mock store are global.
+    static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn lock_mock_store() -> MutexGuard<'static, HashMap<String, Vec<u8>>> {
+        match MOCK_STORE.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn lock_tests() -> MutexGuard<'static, ()> {
+        match TEST_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
 
     #[derive(Debug)]
     struct SharedMockCredential {
@@ -184,26 +201,19 @@ mod tests {
 
     impl CredentialApi for SharedMockCredential {
         fn set_secret(&self, secret: &[u8]) -> keyring::Result<()> {
-            MOCK_STORE
-                .lock()
-                .unwrap()
-                .insert(self.key.clone(), secret.to_vec());
+            lock_mock_store().insert(self.key.clone(), secret.to_vec());
             Ok(())
         }
 
         fn get_secret(&self) -> keyring::Result<Vec<u8>> {
-            MOCK_STORE
-                .lock()
-                .unwrap()
+            lock_mock_store()
                 .get(&self.key)
                 .cloned()
                 .ok_or(keyring::Error::NoEntry)
         }
 
         fn delete_credential(&self) -> keyring::Result<()> {
-            MOCK_STORE
-                .lock()
-                .unwrap()
+            lock_mock_store()
                 .remove(&self.key)
                 .map(|_| ())
                 .ok_or(keyring::Error::NoEntry)
@@ -238,14 +248,53 @@ mod tests {
         }
     }
 
-    fn setup() {
-        MOCK_STORE.lock().unwrap().clear();
+    fn setup() -> MutexGuard<'static, ()> {
+        let guard = lock_tests();
+        lock_mock_store().clear();
         keyring::set_default_credential_builder(Box::new(SharedMockCredentialBuilder));
+        guard
+    }
+
+    fn mock_store_key(pubkey_hex: &str) -> String {
+        format!("{}:{}", STORAGE_NAME, pubkey_hex)
+    }
+
+    fn store_secret(keys: &Keys) {
+        let pubkey_hex = keys.public_key().to_hex();
+        lock_mock_store().insert(
+            mock_store_key(&pubkey_hex),
+            keys.secret_key().as_secret_bytes().to_vec(),
+        );
+    }
+
+    fn store_malformed_secret(pubkey_hex: &str, secret: Vec<u8>) {
+        lock_mock_store().insert(mock_store_key(pubkey_hex), secret);
+    }
+
+    fn keyring_secret_for(pubkey_hex: &str) -> keyring::Result<Vec<u8>> {
+        Entry::new(STORAGE_NAME, pubkey_hex)?.get_secret()
+    }
+
+    #[test]
+    fn test_validate_nsec_accepts_generated_nsec_and_rejects_invalid_input() -> Result<()> {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32()?;
+
+        let validated_keys = validate_nsec(&nsec).map_err(anyhow::Error::msg)?;
+        assert_eq!(validated_keys.public_key(), keys.public_key());
+
+        assert_eq!(validate_nsec("").unwrap_err(), "Please enter a private key");
+        assert_eq!(
+            validate_nsec("not-an-nsec").unwrap_err(),
+            "Invalid nsec format"
+        );
+
+        Ok(())
     }
 
     #[test]
     fn test_generate_key_and_save_in_memory() -> Result<()> {
-        setup();
+        let _guard = setup();
         let mut account_manager = AccountManager::new();
         let db = Db::new_in_memory()?;
 
@@ -259,38 +308,83 @@ mod tests {
     }
 
     #[test]
-    fn test_load_keys() -> Result<()> {
-        setup();
+    fn test_load_keys_skips_missing_keyring_entries_and_replaces_loaded_keys() -> Result<()> {
+        let _guard = setup();
         let db = Db::new_in_memory()?;
+        let valid_keys = Keys::generate();
+        let missing_keyring_keys = Keys::generate();
+        let stale_loaded_keys = Keys::generate();
 
-        let generated_keys;
+        db.add_pubkey(valid_keys.public_key().to_hex())?;
+        db.add_pubkey(missing_keyring_keys.public_key().to_hex())?;
+        store_secret(&valid_keys);
 
-        {
-            let mut account_manager = AccountManager::new();
-            generated_keys = account_manager.generate_new_keys_and_save(&db)?;
-            assert!(account_manager.loaded_keys.first().is_some());
-        }
-
-        let mut account_manager = AccountManager::new();
+        let mut account_manager = AccountManager {
+            loaded_keys: vec![stale_loaded_keys],
+        };
         let loaded_keys = account_manager.load_keys(&db)?;
 
-        assert_ne!(loaded_keys.len(), 0);
-        assert_eq!(loaded_keys.first().unwrap(), &generated_keys);
-        assert_eq!(loaded_keys, account_manager.loaded_keys);
+        assert_eq!(loaded_keys, vec![valid_keys.clone()]);
+        assert_eq!(account_manager.loaded_keys, vec![valid_keys]);
 
         Ok(())
     }
 
     #[test]
-    fn test_delete_keys() -> Result<()> {
-        setup();
+    fn test_load_keys_skips_malformed_keyring_secrets() -> Result<()> {
+        let _guard = setup();
+        let db = Db::new_in_memory()?;
+        let valid_keys = Keys::generate();
+        let malformed_secret_pubkey = Keys::generate().public_key().to_hex();
+
+        db.add_pubkey(valid_keys.public_key().to_hex())?;
+        db.add_pubkey(malformed_secret_pubkey.clone())?;
+        store_secret(&valid_keys);
+        store_malformed_secret(&malformed_secret_pubkey, vec![0; 31]);
+
+        let mut account_manager = AccountManager::new();
+        let loaded_keys = account_manager.load_keys(&db)?;
+
+        assert_eq!(loaded_keys, vec![valid_keys.clone()]);
+        assert_eq!(account_manager.loaded_keys, vec![valid_keys]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_save_keys_persists_to_db_and_keyring_for_fresh_load() -> Result<()> {
+        let _guard = setup();
+        let db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        let pubkey_hex = keys.public_key().to_hex();
+
+        let mut saving_manager = AccountManager::new();
+        saving_manager.save_keys(&db, &keys)?;
+
+        assert_eq!(db.get_pubkeys()?, vec![pubkey_hex.clone()]);
+        assert_eq!(
+            keyring_secret_for(&pubkey_hex)?,
+            keys.secret_key().as_secret_bytes().to_vec()
+        );
+
+        let mut loading_manager = AccountManager::new();
+        let loaded_keys = loading_manager.load_keys(&db)?;
+        assert_eq!(loaded_keys, vec![keys.clone()]);
+        assert_eq!(loading_manager.loaded_keys, vec![keys]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_keys_removes_loaded_db_and_keyring_entries() -> Result<()> {
+        let _guard = setup();
         let db = Db::new_in_memory()?;
 
         let mut account_manager = AccountManager::new();
         let generated_keys = account_manager.generate_new_keys_and_save(&db)?;
         assert!(account_manager.loaded_keys.first().is_some());
         account_manager.delete_key(&db, &generated_keys)?;
-        assert_eq!(account_manager.loaded_keys.len(), 0); // test the remove key in-memory
+        assert_eq!(account_manager.loaded_keys.len(), 0);
 
         let entry = Entry::new(STORAGE_NAME, &generated_keys.public_key().to_hex())?;
         assert!(matches!(entry.get_secret(), Err(keyring::Error::NoEntry)));
@@ -301,6 +395,92 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_delete_key_reports_missing_keyring_entry_after_db_delete() -> Result<()> {
+        let _guard = setup();
+        let db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        let pubkey_hex = keys.public_key().to_hex();
+        db.add_pubkey(pubkey_hex.clone())?;
+
+        let mut account_manager = AccountManager {
+            loaded_keys: vec![keys.clone()],
+        };
+        let error = account_manager.delete_key(&db, &keys).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("Tried to delete keyring entry for public key"));
+        assert!(db.get_pubkeys()?.is_empty());
+        assert_eq!(account_manager.loaded_keys, vec![keys]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_key_succeeds_when_db_row_is_missing_but_keyring_entry_exists() -> Result<()> {
+        let _guard = setup();
+        let db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        let pubkey_hex = keys.public_key().to_hex();
+        store_secret(&keys);
+
+        let mut account_manager = AccountManager {
+            loaded_keys: vec![keys],
+        };
+        let key_to_delete = account_manager.loaded_keys[0].clone();
+        account_manager.delete_key(&db, &key_to_delete)?;
+
+        assert!(matches!(
+            keyring_secret_for(&pubkey_hex),
+            Err(keyring::Error::NoEntry)
+        ));
+        assert!(account_manager.loaded_keys.is_empty());
+        assert!(db.get_pubkeys()?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn unwrap_gift_wrap_selects_the_recipient_key_from_the_p_tag() -> Result<()> {
+        let sender = Keys::generate();
+        let recipient = Keys::generate();
+        let wrong_recipient = Keys::generate();
+        let rumor = EventBuilder::new(Kind::TextNote, "wrapped secret");
+        let gift_wrap = EventBuilder::gift_wrap(&sender, &recipient.public_key(), rumor, None)
+            .block_on()
+            .map_err(anyhow::Error::msg)?;
+        let mut account_manager = AccountManager {
+            loaded_keys: vec![wrong_recipient, recipient.clone()],
+        };
+
+        let unwrapped = account_manager.unwrap_gift_wrap(&gift_wrap)?;
+
+        assert_eq!(unwrapped.sender, sender.public_key());
+        assert_eq!(unwrapped.rumor.pubkey, sender.public_key());
+        assert_eq!(unwrapped.rumor.content, "wrapped secret");
+        Ok(())
+    }
+    #[test]
+    fn unwrap_gift_wrap_reports_target_pubkey_when_loaded_key_is_missing() -> Result<()> {
+        let sender = Keys::generate();
+        let recipient = Keys::generate();
+        let wrong_recipient = Keys::generate();
+        let rumor = EventBuilder::new(Kind::TextNote, "wrapped for someone else");
+        let gift_wrap = EventBuilder::gift_wrap(&sender, &recipient.public_key(), rumor, None)
+            .block_on()
+            .map_err(anyhow::Error::msg)?;
+        let mut account_manager = AccountManager {
+            loaded_keys: vec![wrong_recipient],
+        };
+
+        let error = account_manager.unwrap_gift_wrap(&gift_wrap).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains(&recipient.public_key().to_string()));
+        assert!(message.contains(&gift_wrap.id.to_string()));
+        Ok(())
+    }
     #[test]
     fn test_create_auth_event() -> Result<()> {
         let keys = Keys::generate();

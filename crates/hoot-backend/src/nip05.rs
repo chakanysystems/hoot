@@ -236,6 +236,14 @@ pub fn parse_nip05(identifier: &str) -> Option<(String, String)> {
         return None;
     }
 
+    // Domain must be a host name, not a URL fragment or display token.
+    if !domain
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+    {
+        return None;
+    }
+
     Some((local.to_string(), domain.to_string()))
 }
 
@@ -328,34 +336,55 @@ pub fn verify_nip05_for_pubkey(nip05: &str, expected_pubkey_hex: &str) -> Nip05V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{mpsc::TryRecvError, Arc};
+    use std::time::Duration;
 
     #[test]
-    fn test_parse_nip05_valid() {
-        assert_eq!(
-            parse_nip05("bob@example.com"),
-            Some(("bob".to_string(), "example.com".to_string()))
-        );
-        assert_eq!(
-            parse_nip05("user_123@test.org"),
-            Some(("user_123".to_string(), "test.org".to_string()))
-        );
-        assert_eq!(
-            parse_nip05("a.b-c@domain.io"),
-            Some(("a.b-c".to_string(), "domain.io".to_string()))
-        );
+    fn parse_nip05_accepts_supported_local_chars_and_preserves_domain_case() {
+        for (identifier, expected) in [
+            ("bob@example.com", ("bob", "example.com")),
+            ("user_123@test.org", ("user_123", "test.org")),
+            ("a.b-c@domain.io", ("a.b-c", "domain.io")),
+            ("alice@Example.COM", ("alice", "Example.COM")),
+            ("user@domain", ("user", "domain")),
+        ] {
+            assert_eq!(
+                parse_nip05(identifier),
+                Some((expected.0.to_string(), expected.1.to_string())),
+                "expected {identifier:?} to parse into local/domain parts"
+            );
+        }
     }
 
     #[test]
-    fn test_parse_nip05_invalid() {
-        assert_eq!(parse_nip05("bobaexample.com"), None); // No @
-        assert_eq!(parse_nip05("@example.com"), None); // Empty local
-        assert_eq!(parse_nip05("bob@"), None); // Empty domain
-        assert_eq!(parse_nip05("bob@@example.com"), None); // Double @
-        assert_eq!(parse_nip05("Bob@example.com"), None); // Uppercase in local
-        assert_eq!(
-            parse_nip05("user@domain"),
-            Some(("user".to_string(), "domain".to_string()))
-        ); // No TLD is valid
+    fn parse_nip05_rejects_ambiguous_or_invalid_identifiers() {
+        for identifier in [
+            "bobaexample.com",
+            "",
+            "@example.com",
+            "bob@",
+            "@",
+            "bob@@example.com",
+            "bob@example@com",
+            "Bob@example.com",
+            "user+tag@example.com",
+            "user name@example.com",
+            "üser@example.com",
+            "alice@ example.com",
+            "alice@\texample.com",
+        ] {
+            assert_eq!(
+                parse_nip05(identifier),
+                None,
+                "expected {identifier:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn verification_status_reports_only_verified_as_successful() {
+        assert!(Nip05VerificationStatus::Verified.is_verified());
+        assert!(!Nip05VerificationStatus::Failed.is_verified());
     }
 
     #[test]
@@ -396,7 +425,7 @@ mod tests {
     #[test]
     fn resolver_wakes_app_when_resolution_finishes() {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let wake_up = std::sync::Arc::new(move || {
+        let wake_up = Arc::new(move || {
             let _ = sender.send(());
         });
         let mut resolver = Nip05Resolver::new();
@@ -404,9 +433,177 @@ mod tests {
         resolver.request("not-a-nip05".to_string(), wake_up);
 
         receiver
-            .recv_timeout(std::time::Duration::from_secs(1))
+            .recv_timeout(Duration::from_secs(1))
             .expect("resolver should wake the app when a resolution finishes");
         assert!(resolver.process_queue());
         assert_eq!(resolver.get("not-a-nip05"), Some(&Nip05Resolution::Failed));
+    }
+
+    #[test]
+    fn resolver_deduplicates_pending_and_cached_failed_invalid_identifier_requests() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let wake_up = Arc::new(move || {
+            let _ = sender.send(());
+        });
+        let mut resolver = Nip05Resolver::new();
+        let identifier = "not-a-nip05".to_string();
+
+        resolver.request(identifier.clone(), wake_up.clone());
+        assert_eq!(resolver.get(&identifier), Some(&Nip05Resolution::Pending));
+        assert_eq!(resolver.pending.len(), 1);
+
+        resolver.request(identifier.clone(), wake_up.clone());
+        assert_eq!(resolver.get(&identifier), Some(&Nip05Resolution::Pending));
+        assert_eq!(
+            resolver.pending.len(),
+            1,
+            "a duplicate pending request must not enqueue another in-flight resolution"
+        );
+
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("invalid identifier should still complete asynchronously");
+        assert!(resolver.process_queue());
+        assert_eq!(resolver.get(&identifier), Some(&Nip05Resolution::Failed));
+        assert!(resolver.pending.is_empty());
+        assert_eq!(
+            receiver.try_recv(),
+            Err(TryRecvError::Empty),
+            "duplicate pending request must not send a second wakeup"
+        );
+
+        resolver.request(identifier.clone(), wake_up.clone());
+        assert_eq!(
+            resolver.get(&identifier),
+            Some(&Nip05Resolution::Failed),
+            "cached failure must not regress to pending"
+        );
+        assert!(resolver.pending.is_empty());
+        assert!(!resolver.process_queue());
+        assert_eq!(
+            receiver.try_recv(),
+            Err(TryRecvError::Empty),
+            "cached failure must not enqueue another wakeup"
+        );
+    }
+
+    #[test]
+    fn verifier_request_tracks_pending_work_deduplicates_and_wakes_on_completion() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let wake_up = Arc::new(move || {
+            let _ = sender.send(());
+        });
+        let mut verifier = Nip05Verifier::new();
+        let key = "pubkey:not-a-nip05".to_string();
+
+        verifier.request(
+            "not-a-nip05".to_string(),
+            "pubkey".to_string(),
+            wake_up.clone(),
+        );
+        assert!(verifier.pending.contains(&key));
+        assert_eq!(verifier.pending.len(), 1);
+
+        verifier.request(
+            "not-a-nip05".to_string(),
+            "pubkey".to_string(),
+            wake_up.clone(),
+        );
+        assert_eq!(verifier.pending.len(), 1);
+
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("invalid verification should complete and wake the app");
+        let db = crate::db::Db::new_in_memory().expect("in-memory database should migrate");
+        assert!(verifier.process_queue(&db));
+        assert!(!verifier.pending.contains(&key));
+        assert_eq!(receiver.try_recv(), Err(TryRecvError::Empty));
+    }
+    #[test]
+    fn resolver_process_queue_maps_completed_results_to_cached_resolution_status() {
+        let mut resolver = Nip05Resolver::new();
+        let resolved_identifier = "alice@example.com".to_string();
+        let failed_identifier = "bob@example.com".to_string();
+        let resolved_pubkey = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefaf0f1";
+
+        resolver.pending.insert(resolved_identifier.clone());
+        resolver
+            .sender
+            .send(ResolutionResult {
+                nip05: resolved_identifier.clone(),
+                pubkey_hex: Some(resolved_pubkey.to_string()),
+            })
+            .expect("test receiver should be alive");
+        assert!(resolver.process_queue());
+        assert_eq!(
+            resolver.get(&resolved_identifier),
+            Some(&Nip05Resolution::Resolved(resolved_pubkey.to_string()))
+        );
+        assert!(!resolver.pending.contains(&resolved_identifier));
+
+        resolver.pending.insert(failed_identifier.clone());
+        resolver
+            .sender
+            .send(ResolutionResult {
+                nip05: failed_identifier.clone(),
+                pubkey_hex: None,
+            })
+            .expect("test receiver should be alive");
+        assert!(resolver.process_queue());
+        assert_eq!(
+            resolver.get(&failed_identifier),
+            Some(&Nip05Resolution::Failed)
+        );
+        assert!(!resolver.pending.contains(&failed_identifier));
+    }
+    #[test]
+    fn verifier_process_queue_applies_injected_completed_results_without_network() -> Result<()> {
+        let db = crate::db::Db::new_in_memory()?;
+        db.add_nip05("verified_pubkey", "alice@example.com", true)?;
+        db.add_nip05("failed_pubkey", "bob@example.com", false)?;
+
+        let mut verifier = Nip05Verifier::new();
+        assert!(!verifier.process_queue(&db));
+
+        let verified_key = "verified_pubkey:alice@example.com".to_string();
+        verifier.pending.insert(verified_key.clone());
+        verifier
+            .sender
+            .send(VerificationResult {
+                nip05: "alice@example.com".to_string(),
+                pubkey_hex: "verified_pubkey".to_string(),
+                status: Nip05VerificationStatus::Verified,
+            })
+            .expect("test receiver should be alive");
+
+        assert!(verifier.process_queue(&db));
+        assert!(!verifier.pending.contains(&verified_key));
+        let verified_entries = db.get_nip05s_for_pubkey("verified_pubkey")?;
+        assert_eq!(verified_entries.len(), 1);
+        assert_eq!(
+            verified_entries[0].last_verified,
+            verified_entries[0].last_checked
+        );
+        assert!(verified_entries[0].last_verified.is_some());
+
+        let failed_key = "failed_pubkey:bob@example.com".to_string();
+        verifier.pending.insert(failed_key.clone());
+        verifier
+            .sender
+            .send(VerificationResult {
+                nip05: "bob@example.com".to_string(),
+                pubkey_hex: "failed_pubkey".to_string(),
+                status: Nip05VerificationStatus::Failed,
+            })
+            .expect("test receiver should be alive");
+
+        assert!(verifier.process_queue(&db));
+        assert!(!verifier.pending.contains(&failed_key));
+        let failed_entries = db.get_nip05s_for_pubkey("failed_pubkey")?;
+        assert_eq!(failed_entries.len(), 1);
+        assert_eq!(failed_entries[0].last_verified, None);
+        assert!(failed_entries[0].last_checked.is_some());
+
+        Ok(())
     }
 }

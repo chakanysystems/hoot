@@ -453,6 +453,7 @@ ORDER BY le.created_at DESC
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr::{Event, EventBuilder, Keys, Kind, Tag, TagKind, TagStandard, Timestamp};
 
     #[test]
     fn table_entry_mapping_preserves_message_list_row_fields() -> Result<()> {
@@ -471,6 +472,274 @@ mod tests {
         assert_eq!(entry.pubkey, "pubkey-hex");
         assert_eq!(entry.subject, "Subject line");
         assert_eq!(entry.thread_count, 2);
+
+        Ok(())
+    }
+
+    fn mail_event(
+        keys: &Keys,
+        subject: &str,
+        content: &str,
+        created_at: u64,
+        parent: Option<&Event>,
+    ) -> Event {
+        let mut tags = vec![Tag::from_standardized(TagStandard::Subject(
+            subject.to_string(),
+        ))];
+        if let Some(parent) = parent {
+            tags.push(Tag::event(parent.id));
+        }
+        EventBuilder::new(Kind::Custom(MAIL_EVENT_KIND), content)
+            .tags(tags)
+            .custom_created_at(Timestamp::from(created_at))
+            .sign_with_keys(keys)
+            .expect("mail event should sign")
+    }
+
+    fn insert_profile_metadata(
+        db: &Db,
+        keys: &Keys,
+        name: Option<&str>,
+        display_name: Option<&str>,
+    ) -> Result<()> {
+        let pubkey = keys.public_key().to_hex();
+        db.connection.execute(
+            "INSERT INTO profile_metadata (pubkey, id, name, display_name, picture, nip05, created_at)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL, 42)",
+            (pubkey.as_str(), format!("{pubkey}-profile"), name, display_name),
+        )?;
+        Ok(())
+    }
+
+    fn ids(entries: &[TableEntry]) -> Vec<String> {
+        entries.iter().map(|entry| entry.id.clone()).collect()
+    }
+
+    #[test]
+    fn mailbox_queries_classify_senders_and_exclude_trash_junk_and_requests() -> Result<()> {
+        use crate::db::sender_status::SenderStatus;
+
+        let mut db = Db::new_in_memory()?;
+        let own = Keys::generate();
+        let contact = Keys::generate();
+        let allowed = Keys::generate();
+        let request = Keys::generate();
+        let junked = Keys::generate();
+
+        db.add_pubkey(own.public_key().to_hex())?;
+        db.save_contact(&contact.public_key().to_hex(), None)?;
+        db.set_sender_status(&allowed.public_key().to_hex(), &SenderStatus::Allowed)?;
+        db.set_sender_status(&junked.public_key().to_hex(), &SenderStatus::Junked)?;
+
+        let own_event = mail_event(&own, "Needle own", "own body", 10, None);
+        let contact_event = mail_event(&contact, "Needle contact", "contact body", 20, None);
+        let allowed_event = mail_event(&allowed, "Allowed", "allowed needle body", 30, None);
+        let request_event = mail_event(&request, "Needle request", "request body", 40, None);
+        let junk_event = mail_event(&junked, "Needle junk", "junk body", 50, None);
+        for event in [
+            &own_event,
+            &contact_event,
+            &allowed_event,
+            &request_event,
+            &junk_event,
+        ] {
+            db.store_event(event, None, None)?;
+        }
+
+        let inbox_ids = ids(&db.get_top_level_messages()?);
+        assert!(inbox_ids.contains(&own_event.id.to_string()));
+        assert!(inbox_ids.contains(&contact_event.id.to_string()));
+        assert!(inbox_ids.contains(&allowed_event.id.to_string()));
+        assert!(!inbox_ids.contains(&request_event.id.to_string()));
+        assert!(!inbox_ids.contains(&junk_event.id.to_string()));
+
+        assert_eq!(
+            ids(&db.get_request_messages()?),
+            vec![request_event.id.to_string()]
+        );
+        assert_eq!(
+            ids(&db.get_junk_messages()?),
+            vec![junk_event.id.to_string()]
+        );
+
+        let search_ids = ids(&db.search_messages("needle")?);
+        assert!(search_ids.contains(&own_event.id.to_string()));
+        assert!(search_ids.contains(&contact_event.id.to_string()));
+        assert!(search_ids.contains(&allowed_event.id.to_string()));
+        assert!(!search_ids.contains(&request_event.id.to_string()));
+        assert!(!search_ids.contains(&junk_event.id.to_string()));
+
+        db.record_trash(&[contact_event.id.to_string()], 999)?;
+        assert!(!ids(&db.get_top_level_messages()?).contains(&contact_event.id.to_string()));
+        assert!(!ids(&db.search_messages("contact")?).contains(&contact_event.id.to_string()));
+        assert_eq!(
+            ids(&db.get_trash_messages()?),
+            vec![contact_event.id.to_string()]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_mail_event_ids_returns_only_live_mail_events() -> Result<()> {
+        let mut db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        assert!(db.get_mail_event_ids()?.is_empty());
+
+        let live = mail_event(&keys, "Live", "live mail", 10, None);
+        let trashed = mail_event(&keys, "Trashed", "trashed mail", 20, None);
+        let deleted = mail_event(&keys, "Deleted", "deleted mail", 30, None);
+        let non_mail = EventBuilder::new(Kind::TextNote, "not mail")
+            .custom_created_at(Timestamp::from(40))
+            .sign_with_keys(&keys)
+            .expect("text note should sign");
+        for event in [&live, &trashed, &deleted, &non_mail] {
+            db.store_event(event, None, None)?;
+        }
+
+        db.record_trash(&[trashed.id.to_string()], 999)?;
+        db.record_deletions(
+            &[deleted.id.to_string()],
+            Some(&keys.public_key().to_hex()),
+            None,
+        )?;
+
+        assert_eq!(db.get_mail_event_ids()?, vec![live.id.to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn search_messages_matches_content_subject_and_profiles_for_eligible_senders() -> Result<()> {
+        use crate::db::sender_status::SenderStatus;
+
+        let db = Db::new_in_memory()?;
+        let body_sender = Keys::generate();
+        let subject_sender = Keys::generate();
+        let name_sender = Keys::generate();
+        let display_sender = Keys::generate();
+        let request_sender = Keys::generate();
+        let junked_sender = Keys::generate();
+        let text_sender = Keys::generate();
+
+        for sender in [
+            &body_sender,
+            &subject_sender,
+            &name_sender,
+            &display_sender,
+            &text_sender,
+        ] {
+            db.set_sender_status(&sender.public_key().to_hex(), &SenderStatus::Allowed)?;
+        }
+        db.set_sender_status(&junked_sender.public_key().to_hex(), &SenderStatus::Junked)?;
+        insert_profile_metadata(
+            &db,
+            &name_sender,
+            Some("Needle Name"),
+            Some("Plain Display"),
+        )?;
+        insert_profile_metadata(
+            &db,
+            &display_sender,
+            Some("Plain Name"),
+            Some("Needle Display"),
+        )?;
+
+        let subject_match = mail_event(&subject_sender, "NEEDLE subject", "plain body", 50, None);
+        let body_match = mail_event(&body_sender, "Plain subject", "body needle", 40, None);
+        let name_match = mail_event(&name_sender, "Plain subject", "plain body", 30, None);
+        let display_match = mail_event(&display_sender, "Plain subject", "plain body", 20, None);
+        let request_match = mail_event(&request_sender, "Needle request", "needle body", 60, None);
+        let junked_match = mail_event(&junked_sender, "Needle junk", "needle body", 70, None);
+        let text_note = EventBuilder::new(Kind::TextNote, "needle text note")
+            .custom_created_at(Timestamp::from(80))
+            .sign_with_keys(&text_sender)
+            .expect("text note should sign");
+
+        for event in [
+            &subject_match,
+            &body_match,
+            &name_match,
+            &display_match,
+            &request_match,
+            &junked_match,
+            &text_note,
+        ] {
+            db.store_event(event, None, None)?;
+        }
+
+        assert_eq!(
+            ids(&db.search_messages("needle")?),
+            vec![
+                subject_match.id.to_string(),
+                body_match.id.to_string(),
+                name_match.id.to_string(),
+                display_match.id.to_string(),
+            ]
+        );
+        assert!(db.search_messages("absent")?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_mail_message_extracts_recipients_subject_parent_and_sender_nip05_tags() {
+        let author = Keys::generate();
+        let recipient = Keys::generate();
+        let parent = mail_event(&author, "Parent", "parent", 1, None);
+        let event = EventBuilder::new(Kind::Custom(MAIL_EVENT_KIND), "parsed body")
+            .tags(vec![
+                Tag::public_key(recipient.public_key()),
+                Tag::event(parent.id),
+                Tag::from_standardized(TagStandard::Subject("Parsed subject".to_string())),
+                Tag::custom(TagKind::custom("nip05"), vec!["sender@example.com"]),
+            ])
+            .custom_created_at(Timestamp::from(99))
+            .sign_with_keys(&author)
+            .expect("mail event should sign");
+        let raw = serde_json::to_string(&event).expect("event should serialize");
+
+        let parsed = Db::parse_mail_message(&raw).expect("mail event should parse");
+
+        assert_eq!(parsed.id, Some(event.id));
+        assert_eq!(parsed.created_at, Some(99));
+        assert_eq!(parsed.author, Some(author.public_key()));
+        assert_eq!(parsed.content, "parsed body");
+        assert_eq!(parsed.subject, "Parsed subject");
+        assert_eq!(parsed.to, vec![recipient.public_key()]);
+        assert_eq!(parsed.parent_events, Some(vec![parent.id]));
+        assert_eq!(parsed.sender_nip05.as_deref(), Some("sender@example.com"));
+    }
+    #[test]
+    fn thread_queries_walk_parents_and_replies_while_respecting_trash_filter() -> Result<()> {
+        let mut db = Db::new_in_memory()?;
+        let author = Keys::generate();
+        db.add_pubkey(author.public_key().to_hex())?;
+        let root = mail_event(&author, "Thread", "root body", 10, None);
+        let reply = mail_event(&author, "Thread", "reply body", 20, Some(&root));
+        db.store_event(&root, None, None)?;
+        db.store_event(&reply, None, None)?;
+
+        let top_level = db.get_top_level_messages()?;
+        assert_eq!(top_level.len(), 1);
+        assert_eq!(top_level[0].id, root.id.to_string());
+        assert_eq!(top_level[0].content, "reply body");
+        assert_eq!(top_level[0].thread_count, 2);
+
+        let thread = db.get_email_thread(&reply.id.to_string())?;
+        assert_eq!(thread.len(), 2);
+        assert_eq!(thread[0].id, Some(root.id));
+        assert_eq!(thread[0].parent_events, None);
+        assert_eq!(thread[1].id, Some(reply.id));
+        assert_eq!(thread[1].parent_events, Some(vec![root.id]));
+
+        db.record_trash(&[reply.id.to_string()], 999)?;
+        assert_eq!(db.get_email_thread(&root.id.to_string())?.len(), 1);
+        assert_eq!(
+            db.get_email_thread_including_trash(&root.id.to_string())?
+                .len(),
+            2
+        );
+        assert_eq!(db.get_mail_event_ids()?, vec![root.id.to_string()]);
 
         Ok(())
     }

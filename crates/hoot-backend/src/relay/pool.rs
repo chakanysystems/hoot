@@ -255,3 +255,125 @@ impl RelayPool {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::{EventBuilder, Keys, Kind};
+
+    #[test]
+    fn new_pool_has_no_relays_subscriptions_or_pending_auth_work() {
+        let mut pool = RelayPool::new();
+
+        assert!(pool.relays.is_empty());
+        assert!(pool.subscriptions.is_empty());
+        assert!(pool
+            .take_pending_auth_subscriptions("wss://missing.example")
+            .is_empty());
+        assert_eq!(pool.get_challenge("wss://missing.example"), None);
+        assert!(!pool.is_key_authenticated("wss://missing.example", "pubkey"));
+    }
+
+    #[test]
+    fn pending_auth_subscriptions_are_tracked_per_relay_and_cleared_on_take() {
+        let mut pool = RelayPool::new();
+
+        pool.track_pending_auth_subscription("wss://relay-a.example", "sub-a1");
+        pool.track_pending_auth_subscription("wss://relay-b.example", "sub-b1");
+        pool.track_pending_auth_subscription("wss://relay-a.example", "sub-a2");
+
+        assert_eq!(
+            pool.take_pending_auth_subscriptions("wss://relay-a.example"),
+            vec!["sub-a1".to_string(), "sub-a2".to_string()]
+        );
+        assert!(pool
+            .take_pending_auth_subscriptions("wss://relay-a.example")
+            .is_empty());
+        assert_eq!(
+            pool.take_pending_auth_subscriptions("wss://relay-b.example"),
+            vec!["sub-b1".to_string()]
+        );
+    }
+
+    #[test]
+    fn pending_auth_subscriptions_preserve_duplicate_retry_entries_until_taken() {
+        let mut pool = RelayPool::new();
+
+        pool.track_pending_auth_subscription("wss://relay.example", "mailbox");
+        pool.track_pending_auth_subscription("wss://relay.example", "mailbox");
+
+        assert_eq!(
+            pool.take_pending_auth_subscriptions("wss://relay.example"),
+            vec!["mailbox".to_string(), "mailbox".to_string()]
+        );
+        assert!(pool
+            .take_pending_auth_subscriptions("wss://relay.example")
+            .is_empty());
+
+        pool.track_pending_auth_subscription("wss://relay.example", "mailbox");
+        assert_eq!(
+            pool.take_pending_auth_subscriptions("wss://relay.example"),
+            vec!["mailbox".to_string()]
+        );
+    }
+
+    #[test]
+    fn auth_and_subscription_operations_for_unknown_relays_are_noops() {
+        let mut pool = RelayPool::new();
+
+        pool.add_authenticated_key("wss://missing.example", "pubkey".to_string());
+        assert!(!pool.is_key_authenticated("wss://missing.example", "pubkey"));
+        assert_eq!(pool.get_challenge("wss://missing.example"), None);
+
+        let event = EventBuilder::new(Kind::TextNote, "auth no-op")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        pool.send_auth("wss://missing.example", event).unwrap();
+        pool.send_subscription_to_relay("wss://missing.example", "missing-sub")
+            .unwrap();
+        pool.send(WsMessage::Text("no relays".to_string())).unwrap();
+    }
+
+    #[test]
+    fn add_subscription_records_subscription_even_when_no_relays_are_connected() {
+        let mut pool = RelayPool::new();
+        let sub = Subscription::new(
+            "mailbox".to_string(),
+            vec![nostr::types::Filter::new().kind(Kind::TextNote)],
+        );
+
+        pool.add_subscription(sub).unwrap();
+
+        assert!(pool.subscriptions.contains_key("mailbox"));
+        assert_eq!(pool.subscriptions["mailbox"].id, "mailbox");
+        assert_eq!(pool.subscriptions["mailbox"].filters.len(), 1);
+    }
+
+    #[test]
+    fn handle_message_returns_text_payloads_and_ignores_control_frames() {
+        let mut pool = RelayPool::new();
+
+        assert_eq!(
+            pool.handle_message(
+                "wss://relay.example".to_string(),
+                WsMessage::Text("relay payload".to_string()),
+            ),
+            Some("relay payload".to_string())
+        );
+        assert_eq!(
+            pool.handle_message(
+                "wss://relay.example".to_string(),
+                WsMessage::Binary(vec![1, 2])
+            ),
+            None
+        );
+        assert_eq!(
+            pool.handle_message("wss://relay.example".to_string(), WsMessage::Ping(vec![1])),
+            None
+        );
+        assert_eq!(
+            pool.handle_message("wss://relay.example".to_string(), WsMessage::Pong(vec![1])),
+            None
+        );
+    }
+}

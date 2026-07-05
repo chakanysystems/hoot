@@ -150,4 +150,68 @@ mod tests {
         std::fs::remove_file(path)?;
         Ok(())
     }
+
+    fn temp_db_path(name: &str) -> Result<PathBuf> {
+        Ok(std::env::temp_dir().join(format!(
+            "hoot-{name}-{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        )))
+    }
+
+    #[test]
+    fn in_memory_database_is_unlocked_and_initialized_after_migrations() -> Result<()> {
+        let db = Db::new_in_memory()?;
+
+        assert!(db.is_unlocked());
+        assert!(db.is_initialized());
+        Ok(())
+    }
+
+    #[test]
+    fn file_database_reports_uninitialized_until_unlocked_and_migrated() -> Result<()> {
+        let path = temp_db_path("initialization-state")?;
+        let mut db = Db::new(path.clone())?;
+
+        assert!(!db.is_initialized());
+        db.unlock_with_password("test-password".to_string())?;
+        assert!(db.is_initialized());
+
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn encrypted_database_requires_the_original_password_to_unlock() -> Result<()> {
+        let path = temp_db_path("wrong-password")?;
+        {
+            let mut db = Db::new(path.clone())?;
+            db.unlock_with_password("correct-password".to_string())?;
+            assert!(db.is_unlocked());
+        }
+
+        let mut wrong_password = Db::new(path.clone())?;
+        let err = wrong_password
+            .unlock_with_password("wrong-password".to_string())
+            .unwrap_err();
+        assert_eq!(format_unlock_error(&err), "Wrong password");
+
+        let mut correct_password = Db::new(path.clone())?;
+        correct_password.unlock_with_password("correct-password".to_string())?;
+        assert!(correct_password.is_unlocked());
+
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn format_unlock_error_preserves_non_sqlcipher_errors() {
+        let err = anyhow::anyhow!("ordinary failure");
+
+        assert_eq!(
+            format_unlock_error(&err),
+            "Database error: ordinary failure"
+        );
+    }
 }

@@ -110,3 +110,77 @@ impl Db {
         Ok(count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draft_lifecycle_preserves_fields_and_orders_by_updated_at() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let first_parents = vec!["parent-root".to_string(), "parent-reply".to_string()];
+        let second_parents = vec!["older-thread".to_string()];
+
+        let first_id = db.save_draft(
+            "Original subject",
+            "alice@example.com, bob@example.com",
+            "Original body",
+            &first_parents,
+            Some("account-a"),
+            Some("alice@example.com"),
+        )?;
+        let second_id = db.save_draft(
+            "Second subject",
+            "carol@example.com",
+            "Second body",
+            &second_parents,
+            None,
+            None,
+        )?;
+        assert_eq!(db.get_draft_count()?, 2);
+
+        let replacement_parents = vec!["new-root".to_string(), "new-reply".to_string()];
+        db.update_draft(
+            first_id,
+            "Updated subject",
+            "dave@example.com",
+            "Updated body",
+            &replacement_parents,
+            Some("account-b"),
+            Some("dave@example.com"),
+        )?;
+        db.connection.execute(
+            "UPDATE drafts SET updated_at = CASE id WHEN ?1 THEN 300 WHEN ?2 THEN 200 END",
+            (first_id, second_id),
+        )?;
+
+        let drafts = db.get_drafts()?;
+        assert_eq!(drafts.len(), 2);
+        assert_eq!(drafts[0].id, first_id);
+        assert_eq!(drafts[0].subject, "Updated subject");
+        assert_eq!(drafts[0].to_field, "dave@example.com");
+        assert_eq!(drafts[0].content, "Updated body");
+        assert_eq!(drafts[0].parent_events, replacement_parents);
+        assert_eq!(drafts[0].selected_account.as_deref(), Some("account-b"));
+        assert_eq!(
+            drafts[0].selected_nip05.as_deref(),
+            Some("dave@example.com")
+        );
+        assert_eq!(drafts[1].id, second_id);
+        assert_eq!(drafts[1].subject, "Second subject");
+        assert_eq!(drafts[1].to_field, "carol@example.com");
+        assert_eq!(drafts[1].content, "Second body");
+        assert_eq!(drafts[1].parent_events, second_parents);
+        assert_eq!(drafts[1].selected_account, None);
+        assert_eq!(drafts[1].selected_nip05, None);
+
+        db.delete_draft(second_id)?;
+        db.delete_draft(second_id)?;
+        let remaining = db.get_drafts()?;
+        assert_eq!(db.get_draft_count()?, 1);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, first_id);
+
+        Ok(())
+    }
+}

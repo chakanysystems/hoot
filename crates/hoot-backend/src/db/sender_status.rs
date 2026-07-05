@@ -102,3 +102,160 @@ impl Db {
         Ok(count > 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert_profile_metadata(
+        db: &Db,
+        pubkey: &str,
+        name: &str,
+        display_name: &str,
+        picture: &str,
+    ) -> Result<()> {
+        db.connection.execute(
+            "INSERT INTO profile_metadata (pubkey, id, name, display_name, picture, nip05, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, 42)",
+            (pubkey, format!("{pubkey}-profile"), name, display_name, picture),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn sender_status_lifecycle_controls_known_and_junked_sender_queries() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let allowed = "allowed-pubkey";
+        let junked = "junked-pubkey";
+        let contact = "contact-pubkey";
+
+        assert_eq!(SenderStatus::Allowed.as_str(), "allowed");
+        assert_eq!(SenderStatus::Junked.as_str(), "junked");
+        assert_eq!(db.get_sender_status(allowed)?, None);
+        assert!(!db.is_known_sender(allowed)?);
+        assert!(!db.is_sender_junked(junked)?);
+
+        db.set_sender_status(allowed, &SenderStatus::Allowed)?;
+        db.set_sender_status(junked, &SenderStatus::Junked)?;
+        db.save_contact(contact, Some("Known contact"))?;
+
+        assert_eq!(db.get_sender_status(allowed)?, Some(SenderStatus::Allowed));
+        assert_eq!(db.get_sender_status(junked)?, Some(SenderStatus::Junked));
+        assert!(db.is_known_sender(allowed)?);
+        assert!(db.is_known_sender(contact)?);
+        assert!(!db.is_known_sender(junked)?);
+        assert!(db.is_sender_junked(junked)?);
+
+        db.set_sender_status(allowed, &SenderStatus::Junked)?;
+        assert_eq!(db.get_sender_status(allowed)?, Some(SenderStatus::Junked));
+        assert!(!db.is_known_sender(allowed)?);
+        assert!(db.is_sender_junked(allowed)?);
+
+        db.remove_sender_status(allowed)?;
+        db.remove_sender_status(allowed)?;
+        assert_eq!(db.get_sender_status(allowed)?, None);
+        assert!(!db.is_sender_junked(allowed)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_senders_by_status_joins_profile_metadata_and_filters_status() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let allowed = "allowed-pubkey";
+        let junked = "junked-pubkey";
+        insert_profile_metadata(&db, allowed, "alice", "Alice", "https://example.com/a.png")?;
+        insert_profile_metadata(
+            &db,
+            junked,
+            "mallory",
+            "Mallory",
+            "https://example.com/m.png",
+        )?;
+        db.set_sender_status(allowed, &SenderStatus::Allowed)?;
+        db.set_sender_status(junked, &SenderStatus::Junked)?;
+
+        let allowed_rows = db.get_senders_by_status(&SenderStatus::Allowed)?;
+        assert_eq!(allowed_rows.len(), 1);
+        assert_eq!(allowed_rows[0].0, allowed);
+        assert_eq!(allowed_rows[0].1.as_deref(), Some("alice"));
+        assert_eq!(allowed_rows[0].2.as_deref(), Some("Alice"));
+        assert_eq!(
+            allowed_rows[0].3.as_deref(),
+            Some("https://example.com/a.png")
+        );
+        assert!(allowed_rows[0].4 > 0);
+
+        let junked_rows = db.get_senders_by_status(&SenderStatus::Junked)?;
+        assert_eq!(junked_rows.len(), 1);
+        assert_eq!(junked_rows[0].0, junked);
+
+        Ok(())
+    }
+
+    #[test]
+    fn remove_sender_status_removes_only_that_sender_from_status_filters() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let removed = "removed-pubkey";
+        let still_allowed = "still-allowed-pubkey";
+        let junked = "junked-pubkey";
+        insert_profile_metadata(
+            &db,
+            removed,
+            "removed",
+            "Removed",
+            "https://example.com/removed.png",
+        )?;
+        insert_profile_metadata(
+            &db,
+            still_allowed,
+            "allowed",
+            "Allowed",
+            "https://example.com/allowed.png",
+        )?;
+
+        db.set_sender_status(removed, &SenderStatus::Allowed)?;
+        db.set_sender_status(still_allowed, &SenderStatus::Allowed)?;
+        db.set_sender_status(junked, &SenderStatus::Junked)?;
+        db.remove_sender_status("missing-pubkey")?;
+        db.remove_sender_status(removed)?;
+
+        assert_eq!(db.get_sender_status(removed)?, None);
+        assert!(!db.is_known_sender(removed)?);
+        assert_eq!(
+            db.get_senders_by_status(&SenderStatus::Allowed)?
+                .into_iter()
+                .map(|row| row.0)
+                .collect::<Vec<_>>(),
+            vec![still_allowed.to_string()]
+        );
+        assert_eq!(
+            db.get_senders_by_status(&SenderStatus::Junked)?
+                .into_iter()
+                .map(|row| row.0)
+                .collect::<Vec<_>>(),
+            vec![junked.to_string()]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_sender_status_reports_unknown_database_values() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        db.connection
+            .pragma_update(None, "ignore_check_constraints", true)?;
+        db.connection.execute(
+            "INSERT INTO sender_status (pubkey, status) VALUES ('bad-pubkey', 'muted')",
+            [],
+        )?;
+
+        let err = db.get_sender_status("bad-pubkey").unwrap_err();
+
+        assert!(
+            err.to_string().contains("Unknown sender status: muted"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+}

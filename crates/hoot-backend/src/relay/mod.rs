@@ -132,4 +132,12 @@ mod tests {
             &["wss://relay.chakany.systems", "wss://talon.quest"]
         );
     }
+
+    #[test]
+    fn relay_auth_state_defaults_to_no_challenge_and_no_authenticated_keys() {
+        let state = RelayAuthState::default();
+
+        assert_eq!(state.challenge, None);
+        assert!(state.authenticated_keys.is_empty());
+    }
 }

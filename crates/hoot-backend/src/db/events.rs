@@ -430,3 +430,186 @@ impl Db {
             .map_err(Into::into)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::{EventBuilder, Keys, Kind, Timestamp};
+
+    fn signed_event(keys: &Keys, kind: Kind, content: &str, created_at: u64) -> Event {
+        EventBuilder::new(kind, content)
+            .custom_created_at(Timestamp::from(created_at))
+            .sign_with_keys(keys)
+            .expect("event should sign")
+    }
+
+    #[test]
+    fn scoped_deletions_remove_only_matching_author_events_and_block_reinsert() -> Result<()> {
+        let mut db = Db::new_in_memory()?;
+        let author = Keys::generate();
+        let other_author = Keys::generate();
+        let author_event = signed_event(&author, Kind::TextNote, "delete me", 100);
+        let other_event = signed_event(&other_author, Kind::TextNote, "keep me", 101);
+        let author_id = author_event.id.to_string();
+        let other_id = other_event.id.to_string();
+
+        db.store_event(&author_event, None, None)?;
+        db.store_event(&other_event, None, None)?;
+        db.record_deletions(
+            &[author_id.clone(), other_id.clone()],
+            Some(&author.public_key().to_hex()),
+            Some("delete-marker"),
+        )?;
+
+        assert!(!db.has_event(&author_id)?);
+        assert!(db.is_deleted(&author_id, Some(&author.public_key().to_hex()))?);
+        assert!(db.has_event(&other_id)?);
+        assert!(!db.is_deleted(&other_id, Some(&other_author.public_key().to_hex()))?);
+
+        db.store_event(&author_event, None, None)?;
+        assert!(
+            !db.has_event(&author_id)?,
+            "a scoped deletion marker must prevent the same author event from being stored again"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn trash_lifecycle_tracks_restores_and_purges_only_expired_events() -> Result<()> {
+        let mut db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        let expired = signed_event(&keys, Kind::TextNote, "expired trash", 100);
+        let restored = signed_event(&keys, Kind::TextNote, "restored trash", 101);
+        let future = signed_event(&keys, Kind::TextNote, "future trash", 102);
+        let expired_id = expired.id.to_string();
+        let restored_id = restored.id.to_string();
+        let future_id = future.id.to_string();
+
+        for event in [&expired, &restored, &future] {
+            db.store_event(event, None, None)?;
+        }
+        db.record_trash(&[expired_id.clone(), restored_id.clone()], 10)?;
+        db.record_trash(&[future_id.clone()], 30)?;
+
+        let trashed = db.get_trashed_event_ids(&[
+            expired_id.clone(),
+            restored_id.clone(),
+            future_id.clone(),
+            "missing".to_string(),
+        ])?;
+        assert_eq!(
+            trashed,
+            HashSet::from([expired_id.clone(), restored_id.clone(), future_id.clone()])
+        );
+
+        db.restore_from_trash(&restored_id)?;
+        db.restore_from_trash("missing")?;
+        let purged = db.purge_expired_trash(20)?;
+
+        assert_eq!(purged, vec![expired_id.clone()]);
+        assert!(!db.has_event(&expired_id)?);
+        assert!(db.is_deleted(&expired_id, None)?);
+        assert!(db.has_event(&restored_id)?);
+        assert!(!db.is_trashed(&restored_id)?);
+        assert!(db.has_event(&future_id)?);
+        assert!(db.is_trashed(&future_id)?);
+
+        db.delete_from_trash(&[future_id.clone(), "missing".to_string()])?;
+        assert!(!db.is_trashed(&future_id)?);
+        assert!(db.has_event(&future_id)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn event_kind_pubkey_lookup_returns_stored_generated_columns() -> Result<()> {
+        let db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        let event = signed_event(
+            &keys,
+            Kind::Custom(crate::mail_event::MAIL_EVENT_KIND),
+            "mail body",
+            200,
+        );
+        let event_id = event.id.to_string();
+
+        db.store_event(&event, None, None)?;
+
+        assert_eq!(
+            db.get_event_kind_pubkey(&event_id)?,
+            Some((
+                i64::from(crate::mail_event::MAIL_EVENT_KIND),
+                keys.public_key().to_hex()
+            ))
+        );
+        assert_eq!(db.get_event_kind_pubkey("missing-id")?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn purge_deleted_events_removes_events_with_unscoped_deletion_markers() -> Result<()> {
+        let mut db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        let event = signed_event(&keys, Kind::TextNote, "purge me", 300);
+        let event_id = event.id.to_string();
+        db.store_event(&event, None, None)?;
+        db.record_deletion_markers(&[event_id.clone()], Some("delete-source"))?;
+        assert!(db.has_event(&event_id)?);
+
+        db.purge_deleted_events()?;
+
+        assert!(!db.has_event(&event_id)?);
+        assert!(db.is_deleted(&event_id, None)?);
+        Ok(())
+    }
+    #[test]
+    fn gift_wrap_maps_and_deletion_markers_are_idempotent() -> Result<()> {
+        let db = Db::new_in_memory()?;
+
+        db.save_gift_wrap_map("wrap-1", "inner-1", Some("recipient-a"), 100)?;
+        db.save_gift_wrap_map("wrap-1", "inner-1", Some("recipient-a"), 100)?;
+        db.save_gift_wrap_map("wrap-2", "inner-1", None, 101)?;
+
+        let mut wrap_ids = db.get_wrap_ids_for_inner("inner-1")?;
+        wrap_ids.sort();
+        assert_eq!(wrap_ids, vec!["wrap-1".to_string(), "wrap-2".to_string()]);
+        assert!(db.gift_wrap_exists("wrap-1")?);
+        assert!(!db.gift_wrap_exists("missing-wrap")?);
+
+        db.record_deletion_markers(&[], Some("source"))?;
+        assert!(!db.is_deleted("wrap-1", None)?);
+        db.record_deletion_markers(
+            &["wrap-1".to_string(), "wrap-1".to_string()],
+            Some("source"),
+        )?;
+        assert!(db.is_deleted("wrap-1", None)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn trash_and_gift_wrap_edge_queries_are_empty_safe() -> Result<()> {
+        let mut db = Db::new_in_memory()?;
+        let keys = Keys::generate();
+        let event = signed_event(&keys, Kind::TextNote, "keep trashed", 400);
+        let event_id = event.id.to_string();
+        db.store_event(&event, None, None)?;
+        db.record_trash(std::slice::from_ref(&event_id), 999)?;
+        db.save_gift_wrap_map("wrap-existing", "inner-existing", None, 400)?;
+
+        assert!(db.get_trashed_event_ids(&[])?.is_empty());
+        db.delete_from_trash(&[])?;
+        assert!(
+            db.is_trashed(&event_id)?,
+            "empty delete_from_trash input must not clear existing trash rows"
+        );
+        assert!(db.get_wrap_ids_for_inner("missing-inner")?.is_empty());
+        assert_eq!(
+            db.get_wrap_ids_for_inner("inner-existing")?,
+            vec!["wrap-existing".to_string()]
+        );
+
+        Ok(())
+    }
+}
