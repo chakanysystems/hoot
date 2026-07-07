@@ -497,6 +497,26 @@ fn sync_unlock_window_state(state: &mut HootState, page: &Page, id: egui::Id) ->
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum AddAccountWindowDisposition {
+    RenderModal,
+    KeepHidden,
+    Remove,
+}
+
+fn add_account_window_disposition(page: &Page, id: egui::Id) -> AddAccountWindowDisposition {
+    let onboarding_id = egui::Id::new(ui::add_account_window::ONBOARDING_ADD_ACCOUNT_WINDOW_ID);
+    if id != onboarding_id {
+        return AddAccountWindowDisposition::RenderModal;
+    }
+
+    if ui::add_account_window::keeps_onboarding_account_window_state(page) {
+        AddAccountWindowDisposition::KeepHidden
+    } else {
+        AddAccountWindowDisposition::Remove
+    }
+}
+
 fn render_app(app: &mut Hoot, ctx: &egui::Context) {
     let unlock_window_id = egui::Id::new(ui::unlock_window::UNLOCK_WINDOW_ID);
     if sync_unlock_window_state(&mut app.state, &app.page, unlock_window_id)
@@ -512,7 +532,13 @@ fn render_app(app: &mut Hoot, ctx: &egui::Context) {
         .copied()
         .collect::<Vec<_>>()
         .into_iter()
-        .filter(|&id| !ui::add_account_window::AddAccountWindow::show_window(app, ctx, id))
+        .filter(|&id| match add_account_window_disposition(&app.page, id) {
+            AddAccountWindowDisposition::RenderModal => {
+                !ui::add_account_window::AddAccountWindow::show_window(app, ctx, id)
+            }
+            AddAccountWindowDisposition::KeepHidden => false,
+            AddAccountWindowDisposition::Remove => true,
+        })
         .collect();
     for id in closed_account_windows {
         app.state.add_account_window.remove(&id);
@@ -809,5 +835,28 @@ mod tests {
 
         assert!(!sync_unlock_window_state(&mut state, &Page::Inbox, id));
         assert!(!state.unlock_window.contains_key(&id));
+    }
+
+    #[test]
+    fn onboarding_account_setup_is_embedded_not_rendered_as_modal() {
+        let onboarding_id = egui::Id::new(ui::add_account_window::ONBOARDING_ADD_ACCOUNT_WINDOW_ID);
+        let normal_id = egui::Id::new("regular_add_account");
+
+        assert!(matches!(
+            add_account_window_disposition(&Page::Inbox, normal_id),
+            AddAccountWindowDisposition::RenderModal
+        ));
+        assert!(matches!(
+            add_account_window_disposition(&Page::OnboardingNewUser, onboarding_id),
+            AddAccountWindowDisposition::KeepHidden
+        ));
+        assert!(matches!(
+            add_account_window_disposition(&Page::OnboardingNewShowKey, onboarding_id),
+            AddAccountWindowDisposition::KeepHidden
+        ));
+        assert!(matches!(
+            add_account_window_disposition(&Page::OnboardingRelay, onboarding_id),
+            AddAccountWindowDisposition::Remove
+        ));
     }
 }

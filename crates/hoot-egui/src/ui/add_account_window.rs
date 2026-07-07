@@ -67,11 +67,11 @@ pub struct AddAccountWindow {}
 
 pub const ONBOARDING_ADD_ACCOUNT_WINDOW_ID: &str = "onboarding_add_account_window";
 
-fn should_render_onboarding_account_window(page: &Page) -> bool {
+pub(crate) fn should_render_onboarding_account_window(page: &Page) -> bool {
     matches!(page, Page::OnboardingNewUser)
 }
 
-fn keeps_onboarding_account_window_state(page: &Page) -> bool {
+pub(crate) fn keeps_onboarding_account_window_state(page: &Page) -> bool {
     matches!(page, Page::OnboardingNewUser | Page::OnboardingNewShowKey)
 }
 
@@ -105,123 +105,9 @@ impl AddAccountWindow {
             );
 
         window.open(&mut keep_open).show(ctx, |ui| {
-                ui.set_min_width(560.0);
-                ui.vertical(|ui| {
-                    Self::render_window_header(ui, &mut close_clicked, is_onboarding);
-                    ui.add_space(4.0);
-
-                    let content_width = 572.0;
-                    ui.horizontal(|ui| {
-                        ui.add_space(24.0);
-                        ui.vertical(|ui| {
-                            ui.set_max_width(content_width);
-                            ui.add_space(18.0);
-
-                            let db_initialized = app.backend.is_database_initialized().unwrap_or(false);
-                            let db_file_has_password = app.backend.db_file_has_password().unwrap_or(false);
-                            {
-                                let state = app.state.add_account_window.get_mut(&id).unwrap();
-                                Self::sync_database_gate_step(
-                                    db_initialized,
-                                    db_file_has_password,
-                                    state,
-                                    is_onboarding,
-                                );
-                            }
-
-                            let current_step = app
-                                .state
-                                .add_account_window
-                                .get(&id)
-                                .map(|s| s.step.clone())
-                                .unwrap_or(AccountCreationStep::ModeSelection);
-
-                            ui.label(
-                                RichText::new(if is_onboarding {
-                                    "Create your first identity"
-                                } else {
-                                    "Add an account"
-                                })
-                                    .size(18.0)
-                                    .strong()
-                                    .color(style::TEXT),
-                            );
-                            ui.add_space(4.0);
-                            let subtitle = if is_onboarding {
-                                match current_step {
-                                    AccountCreationStep::DatabaseSetup => {
-                                        "Create a database password to protect your local data."
-                                    }
-                                    AccountCreationStep::DatabaseUnlock => {
-                                        "Enter your database password to continue."
-                                    }
-                                    AccountCreationStep::ModeSelection => {
-                                        "Choose whether to generate a new key or import an existing one."
-                                    }
-                                    AccountCreationStep::ImportKey => {
-                                        "Paste an existing private key and validate it locally."
-                                    }
-                                    AccountCreationStep::ConfigureMetadata => {
-                                        "Review and adjust profile details before saving your account."
-                                    }
-                                    AccountCreationStep::Review => {
-                                        "Review everything before the account is saved."
-                                    }
-                                }
-                            } else {
-                                "Use an existing key or create a new one. Nothing is saved until you confirm."
-                            };
-                            ui.label(
-                                RichText::new(subtitle)
-                                    .size(13.0)
-                                    .color(style::TEXT2),
-                            );
-                            ui.add_space(18.0);
-
-                            Self::render_step_indicator_for_step(ui, &current_step, is_onboarding);
-                            ui.add_space(18.0);
-
-                            if let Some(error) = app
-                                .state
-                                .add_account_window
-                                .get(&id)
-                                .and_then(|s| s.error_message.clone())
-                            {
-                                Self::render_error_banner(ui, &error);
-                                ui.add_space(16.0);
-                            }
-
-                            match current_step {
-                                AccountCreationStep::DatabaseSetup => {
-                                    Self::render_database_setup_step(app, ui, id, is_onboarding)
-                                }
-                                AccountCreationStep::DatabaseUnlock => {
-                                    if Self::render_database_unlock_step(app, ui, id, is_onboarding) {
-                                        should_close_from_save = true;
-                                    }
-                                }
-                                AccountCreationStep::ModeSelection => {
-                                    Self::render_mode_selection(app, ui, id, is_onboarding)
-                                }
-                                AccountCreationStep::ImportKey => {
-                                    Self::render_import_step(app, ui, id)
-                                }
-                                AccountCreationStep::ConfigureMetadata => {
-                                    Self::render_metadata_step(app, ui, id)
-                                }
-                                AccountCreationStep::Review => {
-                                    if Self::render_review_step(app, ui, id) {
-                                        should_close_from_save = true;
-                                    }
-                                }
-                            }
-
-                            ui.add_space(22.0);
-                        });
-                        ui.add_space(24.0);
-                    });
-                });
-            });
+            should_close_from_save =
+                Self::render_contents(app, ui, id, is_onboarding, &mut close_clicked);
+        });
 
         if close_clicked && is_onboarding {
             app.page = Page::Onboarding;
@@ -232,6 +118,133 @@ impl AddAccountWindow {
         }
 
         keep_open && !close_clicked && !should_close_from_save
+    }
+
+    pub(crate) fn render_onboarding_panel(app: &mut crate::Hoot, ui: &mut egui::Ui, id: egui::Id) {
+        let mut close_clicked = false;
+        let _ = Self::render_contents(app, ui, id, true, &mut close_clicked);
+        if close_clicked {
+            app.page = Page::Onboarding;
+        }
+    }
+
+    fn render_contents(
+        app: &mut crate::Hoot,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        is_onboarding: bool,
+        close_clicked: &mut bool,
+    ) -> bool {
+        let mut should_close_from_save = false;
+        ui.set_min_width(560.0);
+        ui.vertical(|ui| {
+            Self::render_window_header(ui, close_clicked, is_onboarding);
+            ui.add_space(4.0);
+
+            let content_width = 572.0;
+            ui.horizontal(|ui| {
+                ui.add_space(24.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width(content_width);
+                    ui.add_space(18.0);
+
+                    let db_initialized = app.backend.is_database_initialized().unwrap_or(false);
+                    let db_file_has_password = app.backend.db_file_has_password().unwrap_or(false);
+                    {
+                        let state = app.state.add_account_window.get_mut(&id).unwrap();
+                        Self::sync_database_gate_step(
+                            db_initialized,
+                            db_file_has_password,
+                            state,
+                            is_onboarding,
+                        );
+                    }
+
+                    let current_step = app
+                        .state
+                        .add_account_window
+                        .get(&id)
+                        .map(|s| s.step.clone())
+                        .unwrap_or(AccountCreationStep::ModeSelection);
+
+                    ui.label(
+                        RichText::new(if is_onboarding {
+                            "Create your first identity"
+                        } else {
+                            "Add an account"
+                        })
+                        .size(18.0)
+                        .strong()
+                        .color(style::TEXT),
+                    );
+                    ui.add_space(4.0);
+                    let subtitle = if is_onboarding {
+                        match current_step {
+                            AccountCreationStep::DatabaseSetup => {
+                                "Create a database password to protect your local data."
+                            }
+                            AccountCreationStep::DatabaseUnlock => {
+                                "Enter your database password to continue."
+                            }
+                            AccountCreationStep::ModeSelection => {
+                                "Choose whether to generate a new key or import an existing one."
+                            }
+                            AccountCreationStep::ImportKey => {
+                                "Paste an existing private key and validate it locally."
+                            }
+                            AccountCreationStep::ConfigureMetadata => {
+                                "Review and adjust profile details before saving your account."
+                            }
+                            AccountCreationStep::Review => "Review everything before the account is saved.",
+                        }
+                    } else {
+                        "Use an existing key or create a new one. Nothing is saved until you confirm."
+                    };
+                    ui.label(RichText::new(subtitle).size(13.0).color(style::TEXT2));
+                    ui.add_space(18.0);
+
+                    Self::render_step_indicator_for_step(ui, &current_step, is_onboarding);
+                    ui.add_space(18.0);
+
+                    if let Some(error) = app
+                        .state
+                        .add_account_window
+                        .get(&id)
+                        .and_then(|s| s.error_message.clone())
+                    {
+                        Self::render_error_banner(ui, &error);
+                        ui.add_space(16.0);
+                    }
+
+                    match current_step {
+                        AccountCreationStep::DatabaseSetup => {
+                            Self::render_database_setup_step(app, ui, id, is_onboarding)
+                        }
+                        AccountCreationStep::DatabaseUnlock => {
+                            if Self::render_database_unlock_step(app, ui, id, is_onboarding) {
+                                should_close_from_save = true;
+                            }
+                        }
+                        AccountCreationStep::ModeSelection => {
+                            Self::render_mode_selection(app, ui, id, is_onboarding)
+                        }
+                        AccountCreationStep::ImportKey => Self::render_import_step(app, ui, id),
+                        AccountCreationStep::ConfigureMetadata => {
+                            Self::render_metadata_step(app, ui, id)
+                        }
+                        AccountCreationStep::Review => {
+                            if Self::render_review_step(app, ui, id) {
+                                should_close_from_save = true;
+                            }
+                        }
+                    }
+
+                    ui.add_space(22.0);
+                });
+                ui.add_space(24.0);
+            });
+        });
+        should_close_from_save
     }
 
     fn render_window_header(ui: &mut egui::Ui, close_clicked: &mut bool, is_onboarding: bool) {

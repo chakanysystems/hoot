@@ -46,7 +46,7 @@ impl Page {
 
     /// Returns true for pages that show the global search bar.
     pub fn shows_global_search(&self) -> bool {
-        self.shows_left_panel() || matches!(self, Page::OnboardingRelay)
+        self.shows_left_panel()
     }
 }
 
@@ -122,7 +122,7 @@ mod tests {
     use super::Page;
 
     #[test]
-    fn page_chrome_policies_keep_onboarding_relay_search_only() {
+    fn page_chrome_policies_hide_chrome_during_onboarding() {
         let left_panel_pages = [
             Page::Inbox,
             Page::Drafts,
@@ -150,6 +150,7 @@ mod tests {
             Page::OnboardingNewUser,
             Page::OnboardingNewShowKey,
             Page::OnboardingReady,
+            Page::OnboardingRelay,
         ];
         for page in full_screen_pages {
             assert!(!page.shows_left_panel(), "{page:?} should hide left panel");
@@ -158,8 +159,5 @@ mod tests {
                 "{page:?} should hide global search"
             );
         }
-
-        assert!(!Page::OnboardingRelay.shows_left_panel());
-        assert!(Page::OnboardingRelay.shows_global_search());
     }
 }

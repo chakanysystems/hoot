@@ -39,8 +39,13 @@ impl OnboardingScreen {
             }
 
             ui.vertical_centered(|ui| {
-                ui.set_max_width(420.0);
-                ui.add_space(avail.y * 0.12);
+                let max_width = if app.page == Page::OnboardingNewUser {
+                    660.0
+                } else {
+                    420.0
+                };
+                ui.set_max_width(max_width);
+                ui.add_space(avail.y * 0.08);
 
                 match app.page {
                     Page::OnboardingNewUser => Self::render_new_user_steps(app, ui),
@@ -70,12 +75,24 @@ impl OnboardingScreen {
         );
         ui.add_space(8.0);
         ui.label(
-            RichText::new(
-                "Complete identity setup in the account window. You'll choose relays right after.",
-            )
-            .size(14.0)
-            .color(style::TEXT2),
+            RichText::new("Create your identity here. Relays come next.")
+                .size(14.0)
+                .color(style::TEXT2),
         );
+        ui.add_space(20.0);
+
+        egui::Frame::new()
+            .fill(style::SURFACE)
+            .stroke(egui::Stroke::new(1.0, style::border_strong()))
+            .corner_radius(CornerRadius::same(12))
+            .shadow(style::shadow_lg())
+            .show(ui, |ui| {
+                super::add_account_window::AddAccountWindow::render_onboarding_panel(
+                    app,
+                    ui,
+                    onboarding_window_id,
+                );
+            });
     }
 
     fn finish_onboarding(app: &mut Hoot) {
