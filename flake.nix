@@ -82,8 +82,8 @@
               root = unfilteredRoot;
               fileset = lib.fileset.unions [
                 (craneLib.fileset.commonCargoSources unfilteredRoot)
-                (lib.fileset.maybeMissing ./assets)
-                (lib.fileset.maybeMissing ./migrations)
+                (lib.fileset.maybeMissing ./crates/hoot-egui/assets)
+                (lib.fileset.maybeMissing ./crates/hoot-backend/migrations)
               ];
             };
 
